@@ -60,14 +60,14 @@
     ],
     "screenshots": [
         {
-            "src": "pwa/screenshots/pp/desktop_screenshot.png",
+            "src": "pwa/screenshots/desktop_screenshot.png",
             "sizes": "1920x1080",
             "type": "image/png",
             "form_factor": "wide",
             "label": "Playground template project for the Wonderland Engine"
         },
         {
-            "src": "pwa/screenshots/pp/mobile_screenshot.png",
+            "src": "pwa/screenshots/mobile_screenshot.png",
             "sizes": "1080x1920",
             "type": "image/png",
             "form_factor": "narrow",
