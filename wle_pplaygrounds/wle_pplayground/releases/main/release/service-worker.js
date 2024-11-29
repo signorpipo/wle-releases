@@ -51,7 +51,7 @@ let _myPutInCacheOnlyResourcesFromCurrentLocation = true;
 
 // Try the cache first, and only if it fails fetch from the network
 // The URL params are ignored as a fallback for the index URL 
-let _myTryFetchFromCacheFirst = false;
+let _myTryFetchFromCacheFirst = true;
 
 // When fetching from the cache first, the resource is never updated again
 // If u want to fetch from the cache to quickly serve the request, but still want to update the cached resource by fetching from the network,
