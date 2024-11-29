@@ -1,8 +1,8 @@
 // #region Service Worker Setup
 
 let _myAppName = "wle-pplayground";
-let _myServiceWorkerVersion = 2;
-let _myCacheVersion = 2;
+let _myServiceWorkerVersion = 3;
+let _myCacheVersion = 3;
 
 
 
