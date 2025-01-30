@@ -1,7 +1,7 @@
 {
-    "name": "wle-pplayground",
-    "short_name": "wle-pplayground",
-    "version": "0.4.2",
+    "name": "PPlayground",
+    "short_name": "PPlayground",
+    "version": "0.5.0",
     "author": "Pipo",
     "description": "Playground template project for the Wonderland Engine",
     "homepage_url": "https://github.com/signorpipo/wle-pplayground",
@@ -60,14 +60,14 @@
     ],
     "screenshots": [
         {
-            "src": "pwa/screenshots/desktop_screenshot.png",
+            "src": "pwa/screenshots/pp/desktop_screenshot.png",
             "sizes": "1920x1080",
             "type": "image/png",
             "form_factor": "wide",
             "label": "Playground template project for the Wonderland Engine"
         },
         {
-            "src": "pwa/screenshots/mobile_screenshot.png",
+            "src": "pwa/screenshots/pp/mobile_screenshot.png",
             "sizes": "1080x1920",
             "type": "image/png",
             "form_factor": "narrow",
