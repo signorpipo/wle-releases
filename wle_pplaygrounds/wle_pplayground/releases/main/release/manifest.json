@@ -8,7 +8,7 @@
     "lang": "en-US",
     "display": "standalone",
     "ovr_package_name": "com.signorpipo.wle_pplayground",
-    "start_url": "https://pplayground.netlify.app/",
+    "start_url": "https://wle-pplayground.netlify.app/",
     "scope": "./",
     "focusaware": true,
     "orientation": "landscape",
