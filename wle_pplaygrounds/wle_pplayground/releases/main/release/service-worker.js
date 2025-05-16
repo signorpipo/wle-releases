@@ -1,8 +1,8 @@
 // #region Service Worker Setup
 
 let _myAppName = "wle-pplayground";
-let _myServiceWorkerVersion = 5;
-let _myCacheVersion = 5;
+let _myServiceWorkerVersion = 6;
+let _myCacheVersion = 6;
 
 
 
@@ -15,12 +15,8 @@ let _myResourceURLsToPrecache = [
     "WonderlandRuntime-LoadingScreen.bin",
     //"WonderlandRuntime-physx.wasm",
     //"WonderlandRuntime-physx.js",
-    //"WonderlandRuntime-physx-simd.wasm",
-    //"WonderlandRuntime-physx-simd.js",
     //"WonderlandRuntime-physx-threads.wasm",
     //"WonderlandRuntime-physx-threads.js",
-    //"WonderlandRuntime-physx-simd-threads.wasm",
-    //"WonderlandRuntime-physx-simd-threads.js",
     _myAppName + ".bin",
     "d1550dc2-2b9c-4c80-a575-22f58d3850d8.webp",
     "assets/audio/sfx/playground/collision.mp3",

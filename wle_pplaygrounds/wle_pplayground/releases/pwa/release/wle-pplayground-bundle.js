@@ -7793,7 +7793,8 @@ var AudioManager = class {
   }
   async load(path, id) {
     if (id < 0) {
-      throw new Error("audio-manager: Negative IDs are not valid! Skipping ${path}.");
+      console.error("audio-manager: Negative IDs are not valid! Skipping ${path}.");
+      return;
     }
     const paths = Array.isArray(path) ? path : [path];
     if (!this._bufferCache[id]) {
@@ -7819,7 +7820,7 @@ var AudioManager = class {
     }
     const bufferList = this._bufferCache[id];
     if (!bufferList) {
-      console.warn(`audio-manager: No audio source is associated with identifier: ${id}`);
+      console.error(`audio-manager: No audio source is associated with identifier: ${id}`);
       return -1;
     }
     if (!this._unlocked) {
@@ -7827,7 +7828,8 @@ var AudioManager = class {
     }
     const player = this._getAvailablePlayer();
     if (!player) {
-      throw new Error(`audio-manager: All players are busy and no low priority player could be found to free up.`);
+      console.warn(`audio-manager: All players are busy and no low priority player could be found to free up to play ${id}.`);
+      return -1;
     }
     const unique_id = this._generateUniqueId(id);
     if (config?.priority) {
@@ -7853,11 +7855,13 @@ var AudioManager = class {
     const id = this.getSourceIdFromPlayId(uniqueId);
     const bufferList = this._bufferCache[id];
     if (!bufferList) {
-      throw new Error(`audio-manager: No audio source is associated with identifier: ${id}`);
+      console.error(`audio-manager: No audio source is associated with identifier: ${id}`);
+      return;
     }
     const player = this._getAvailablePlayer();
     if (!player) {
-      throw new Error(`audio-manager: All players are busy and no low priority player could be found to free up.`);
+      console.warn(`audio-manager: All players are busy and no low priority player could be found to free up.`);
+      return;
     }
     if (config?.priority) {
       this._amountOfFreePlayers--;
@@ -8190,8 +8194,6 @@ var AudioSource = class extends Component12 {
   /**
    * Initializes the audio src component.
    * If `autoplay` is enabled, the audio will start playing as soon as the file is loaded.
-   *
-   * @throws If no audio source path was provided.
    */
   async start() {
     this._gainNode.connect(_audioContext.destination);
@@ -9215,14 +9217,18 @@ var VideoTexture = class extends Component22 {
       this.loaded = true;
     });
     if (this.autoplay) {
-      window.addEventListener("click", this.playAfterUserGesture);
-      window.addEventListener("touchstart", this.playAfterUserGesture);
+      if (this.muted) {
+        this.video?.play();
+      } else {
+        window.addEventListener("click", this.playAfterUserGesture);
+        window.addEventListener("touchstart", this.playAfterUserGesture);
+      }
     }
   }
   onDestroy() {
     this.video?.remove();
     this.texture?.destroy();
-    if (this.autoplay) {
+    if (this.autoplay && !this.muted) {
       window.removeEventListener("click", this.playAfterUserGesture);
       window.removeEventListener("touchstart", this.playAfterUserGesture);
     }
@@ -9541,7 +9547,18 @@ __decorate15([
 ], PlaneDetection.prototype, "collisionMask", void 0);
 
 // node_modules/@wonderlandengine/components/dist/vrm.js
-import { Component as Component25, Property as Property2 } from "@wonderlandengine/api";
+import { Component as Component25 } from "@wonderlandengine/api";
+import { property as property16 } from "@wonderlandengine/api/decorators.js";
+var __decorate16 = function(decorators, target, key, desc) {
+  var c = arguments.length, r = c < 3 ? target : desc === null ? desc = Object.getOwnPropertyDescriptor(target, key) : desc, d;
+  if (typeof Reflect === "object" && typeof Reflect.decorate === "function")
+    r = Reflect.decorate(decorators, target, key, desc);
+  else
+    for (var i = decorators.length - 1; i >= 0; i--)
+      if (d = decorators[i])
+        r = (c < 3 ? d(r) : c > 3 ? d(target, key, r) : d(target, key)) || r;
+  return c > 3 && r && Object.defineProperty(target, key, r), r;
+};
 var VRM_ROLL_AXES = {
   X: [1, 0, 0],
   Y: [0, 1, 0],
@@ -9555,7 +9572,15 @@ var VRM_AIM_AXES = {
   PositiveZ: [0, 0, 1],
   NegativeZ: [0, 0, -1]
 };
+var Rad2Deg = 180 / Math.PI;
+var RightVector = vec3_exports.fromValues(1, 0, 0);
+var UpVector = vec3_exports.fromValues(0, 1, 0);
+var ForwardVector = vec3_exports.fromValues(0, 0, 1);
 var Vrm = class extends Component25 {
+  /** URL to a VRM file to load */
+  src;
+  /** Object the VRM is looking at */
+  lookAtTarget;
   /** Meta information about the VRM model */
   meta = null;
   /** The humanoid bones of the VRM model */
@@ -9637,83 +9662,76 @@ var Vrm = class extends Component25 {
   _lookAt = null;
   /* Whether or not the VRM component has been initialized with `initializeVrm` */
   _initialized = false;
-  init() {
-    this._tempV3 = vec3_exports.create();
-    this._tempV3A = vec3_exports.create();
-    this._tempV3B = vec3_exports.create();
-    this._tempQuat = quat_exports.create();
-    this._tempQuatA = quat_exports.create();
-    this._tempQuatB = quat_exports.create();
-    this._tempMat4A = mat4_exports.create();
-    this._tempQuat2 = quat2_exports.create();
-    this._tailToShape = vec3_exports.create();
-    this._headToTail = vec3_exports.create();
-    this._inertia = vec3_exports.create();
-    this._stiffness = vec3_exports.create();
-    this._external = vec3_exports.create();
-    this._rightVector = vec3_exports.set(vec3_exports.create(), 1, 0, 0);
-    this._upVector = vec3_exports.set(vec3_exports.create(), 0, 1, 0);
-    this._forwardVector = vec3_exports.set(vec3_exports.create(), 0, 0, 1);
-    this._identityQuat = quat_exports.identity(quat_exports.create());
-    this._rad2deg = 180 / Math.PI;
-  }
-  start() {
+  _tempV3 = vec3_exports.create();
+  _tempV3A = vec3_exports.create();
+  _tempV3B = vec3_exports.create();
+  _tempQuat = quat_exports.create();
+  _tempQuatA = quat_exports.create();
+  _tempQuatB = quat_exports.create();
+  _tempQuat2 = quat2_exports.create();
+  _tailToShape = vec3_exports.create();
+  _headToTail = vec3_exports.create();
+  _inertia = vec3_exports.create();
+  _stiffness = vec3_exports.create();
+  _external = vec3_exports.create();
+  _identityQuat = quat_exports.identity(quat_exports.create());
+  async start() {
     if (!this.src) {
       console.error("vrm: src property not set");
       return;
     }
-    this.engine.scene.append(this.src, { loadGltfExtensions: true }).then(({ root, extensions }) => {
-      root.children.forEach((child) => child.parent = this.object);
-      this._initializeVrm(extensions);
-      root.destroy();
-    });
+    const prefab = await this.engine.loadGLTF({ url: this.src, extensions: true });
+    const { root, extensions } = this.engine.scene.instantiate(prefab);
+    root.children.forEach((child) => child.parent = this.object);
+    this._initializeVrm(prefab.extensions, extensions?.idMapping);
+    root.destroy();
   }
   /**
    * Parses the VRM glTF extensions and initializes the vrm component.
    * @param extensions The glTF extensions for the VRM model
    */
-  _initializeVrm(extensions) {
+  _initializeVrm(extensions, idMapping) {
     if (this._initialized) {
-      throw Error("VRM component has already been initialized");
+      throw new Error("VRM component has already been initialized");
     }
     const VRMC_vrm = extensions.root["VRMC_vrm"];
     if (!VRMC_vrm) {
-      throw Error("Missing VRM extensions");
+      throw new Error("Missing VRM extensions");
     }
     if (VRMC_vrm.specVersion !== "1.0") {
-      throw Error(`Unsupported VRM version, only 1.0 is supported, but encountered '${VRMC_vrm.specVersion}'`);
+      throw new Error(`Unsupported VRM version, only 1.0 is supported, but encountered '${VRMC_vrm.specVersion}'`);
     }
     this.meta = VRMC_vrm.meta;
-    this._parseHumanoid(VRMC_vrm.humanoid, extensions);
+    this._parseHumanoid(VRMC_vrm.humanoid, idMapping);
     if (VRMC_vrm.firstPerson) {
       this._parseFirstPerson(VRMC_vrm.firstPerson, extensions);
     }
     if (VRMC_vrm.lookAt) {
       this._parseLookAt(VRMC_vrm.lookAt);
     }
-    this._findAndParseNodeConstraints(extensions);
+    this._findAndParseNodeConstraints(extensions, idMapping);
     const springBone = extensions.root["VRMC_springBone"];
     if (springBone) {
-      this._parseAndInitializeSpringBones(springBone, extensions);
+      this._parseAndInitializeSpringBones(springBone, idMapping);
     }
     this._initialized = true;
   }
-  _parseHumanoid(humanoid, extensions) {
+  _parseHumanoid(humanoid, idMapping) {
     for (const boneName in humanoid.humanBones) {
       if (!(boneName in this.bones)) {
         console.warn(`Unrecognized bone '${boneName}'`);
         continue;
       }
       const node = humanoid.humanBones[boneName].node;
-      const objectId = extensions.idMapping[node];
-      this.bones[boneName] = this.engine.wrapObject(objectId);
-      this.restPose[boneName] = quat_exports.copy(quat_exports.create(), this.bones[boneName].rotationLocal);
+      const objectId = idMapping[node];
+      this.bones[boneName] = this.engine.scene.wrap(objectId);
+      this.restPose[boneName] = this.bones[boneName].getRotationLocal(quat_exports.create());
     }
   }
-  _parseFirstPerson(firstPerson, extensions) {
+  _parseFirstPerson(firstPerson, idMapping) {
     for (const meshAnnotation of firstPerson.meshAnnotations) {
       const annotation = {
-        node: this.engine.wrapObject(extensions.idMapping[meshAnnotation.node]),
+        node: this.engine.scene.wrap(idMapping[meshAnnotation.node]),
         firstPerson: true,
         thirdPerson: true
       };
@@ -9755,7 +9773,7 @@ var Vrm = class extends Component25 {
       verticalUp: parseRangeMap(lookAt3.rangeMapVerticalUp)
     };
   }
-  _findAndParseNodeConstraints(extensions) {
+  _findAndParseNodeConstraints(extensions, idMapping) {
     const traverse = (object) => {
       const nodeExtensions = extensions.node[object.objectId];
       if (nodeExtensions && "VRMC_node_constraint" in nodeExtensions) {
@@ -9772,7 +9790,7 @@ var Vrm = class extends Component25 {
           type = "rotation";
         }
         if (type) {
-          const source = this.engine.wrapObject(extensions.idMapping[constraint[type].source]);
+          const source = this.engine.scene.wrap(idMapping[constraint[type].source]);
           this._nodeConstraints.push({
             type,
             source,
@@ -9780,9 +9798,9 @@ var Vrm = class extends Component25 {
             axis,
             weight: constraint[type].weight,
             /* Rest pose */
-            destinationRestLocalRotation: quat_exports.copy(quat_exports.create(), object.rotationLocal),
-            sourceRestLocalRotation: quat_exports.copy(quat_exports.create(), source.rotationLocal),
-            sourceRestLocalRotationInv: quat_exports.invert(quat_exports.create(), source.rotationLocal)
+            destinationRestLocalRotation: object.getRotationLocal(quat_exports.create()),
+            sourceRestLocalRotation: source.getRotationLocal(quat_exports.create()),
+            sourceRestLocalRotationInv: quat_exports.invert(quat_exports.create(), source.getRotationLocal(this._tempQuat))
           });
         } else {
           console.warn("Unrecognized or invalid VRMC_node_constraint, ignoring it");
@@ -9794,12 +9812,12 @@ var Vrm = class extends Component25 {
     };
     traverse(this.object);
   }
-  _parseAndInitializeSpringBones(springBone, extensions) {
+  _parseAndInitializeSpringBones(springBone, idMapping) {
     const colliders = (springBone.colliders || []).map((collider, i) => {
       const shapeType = "capsule" in collider.shape ? "capsule" : "sphere";
       return {
         id: i,
-        object: this.engine.wrapObject(extensions.idMapping[collider.node]),
+        object: this.engine.scene.wrap(idMapping[collider.node]),
         shape: {
           isCapsule: shapeType === "capsule",
           radius: collider.shape[shapeType].radius,
@@ -9831,13 +9849,13 @@ var Vrm = class extends Component25 {
           state: null
         };
         Object.assign(springJoint, joint);
-        springJoint.node = this.engine.wrapObject(extensions.idMapping[springJoint.node]);
+        springJoint.node = this.engine.scene.wrap(idMapping[joint.node]);
         joints.push(springJoint);
       }
       const springChainColliders = (spring.colliderGroups || []).flatMap((cg) => colliderGroups[cg].colliders);
       this._springChains.push({
         name: spring.name,
-        center: spring.center ? this.engine.wrapObject(extensions.idMapping[spring.center]) : null,
+        center: spring.center ? this.engine.scene.wrap(idMapping[spring.center]) : null,
         joints,
         sphereColliders: springChainColliders.filter((c) => !c.shape.isCapsule),
         capsuleColliders: springChainColliders.filter((c) => c.shape.isCapsule)
@@ -9847,15 +9865,15 @@ var Vrm = class extends Component25 {
       for (let i = 0; i < springChain.joints.length - 1; ++i) {
         const springBoneJoint = springChain.joints[i];
         const childSpringBoneJoint = springChain.joints[i + 1];
-        const springBonePosition = springBoneJoint.node.getTranslationWorld(vec3_exports.create());
-        const childSpringBonePosition = childSpringBoneJoint.node.getTranslationWorld(vec3_exports.create());
+        const springBonePosition = springBoneJoint.node.getPositionWorld(vec3_exports.create());
+        const childSpringBonePosition = childSpringBoneJoint.node.getPositionWorld(vec3_exports.create());
         const boneDirection = vec3_exports.subtract(this._tempV3A, springBonePosition, childSpringBonePosition);
         const state = {
-          prevTail: childSpringBonePosition,
+          prevTail: vec3_exports.copy(vec3_exports.create(), childSpringBonePosition),
           currentTail: vec3_exports.copy(vec3_exports.create(), childSpringBonePosition),
-          initialLocalRotation: quat_exports.copy(quat_exports.create(), springBoneJoint.node.rotationLocal),
-          initialLocalTransformInvert: quat2_exports.invert(quat2_exports.create(), springBoneJoint.node.transformLocal),
-          boneAxis: vec3_exports.normalize(vec3_exports.create(), childSpringBoneJoint.node.getTranslationLocal(this._tempV3)),
+          initialLocalRotation: springBoneJoint.node.getRotationLocal(quat_exports.create()),
+          initialLocalTransformInvert: quat2_exports.invert(quat2_exports.create(), springBoneJoint.node.getTransformLocal(this._tempQuat2)),
+          boneAxis: vec3_exports.normalize(vec3_exports.create(), childSpringBoneJoint.node.getPositionLocal(this._tempV3)),
           /* Ensure bone length is at least 1cm to avoid jittery behaviour from zero-length bones */
           boneLength: Math.max(0.01, vec3_exports.length(boneDirection)),
           /* Tail positions in center space, if needed */
@@ -9888,16 +9906,16 @@ var Vrm = class extends Component25 {
       return;
     }
     const lookAtSource = this.bones.head.transformPointWorld(this._tempV3A, this._lookAt.offsetFromHeadBone);
-    const lookAtTarget = this.lookAtTarget.getTranslationWorld(this._tempV3B);
+    const lookAtTarget = this.lookAtTarget.getPositionWorld(this._tempV3B);
     const lookAtDirection = vec3_exports.sub(this._tempV3A, lookAtTarget, lookAtSource);
     vec3_exports.normalize(lookAtDirection, lookAtDirection);
     this.bones.head.parent.transformVectorInverseWorld(lookAtDirection);
-    const z = vec3_exports.dot(lookAtDirection, this._forwardVector);
-    const x = vec3_exports.dot(lookAtDirection, this._rightVector);
-    const yaw = Math.atan2(x, z) * this._rad2deg;
+    const z = vec3_exports.dot(lookAtDirection, ForwardVector);
+    const x = vec3_exports.dot(lookAtDirection, RightVector);
+    const yaw = Math.atan2(x, z) * Rad2Deg;
     const xz = Math.sqrt(x * x + z * z);
-    const y = vec3_exports.dot(lookAtDirection, this._upVector);
-    let pitch = Math.atan2(-y, xz) * this._rad2deg;
+    const y = vec3_exports.dot(lookAtDirection, UpVector);
+    let pitch = Math.atan2(-y, xz) * Rad2Deg;
     if (pitch > 0) {
       pitch = this._rangeMap(this._lookAt.verticalDown, pitch);
     } else {
@@ -9911,7 +9929,7 @@ var Vrm = class extends Component25 {
         yawLeft = -this._rangeMap(this._lookAt.horizontalOuter, -yawLeft);
       }
       const eyeRotation = quat_exports.fromEuler(this._tempQuatA, pitch, yawLeft, 0);
-      this.bones.leftEye.rotationLocal = quat_exports.multiply(eyeRotation, this.restPose.leftEye, eyeRotation);
+      this.bones.leftEye.setRotationLocal(quat_exports.multiply(eyeRotation, this.restPose.leftEye, eyeRotation));
     }
     if (this.bones.rightEye) {
       let yawRight = yaw;
@@ -9921,7 +9939,7 @@ var Vrm = class extends Component25 {
         yawRight = -this._rangeMap(this._lookAt.horizontalInner, -yawRight);
       }
       const eyeRotation = quat_exports.fromEuler(this._tempQuatA, pitch, yawRight, 0);
-      this.bones.rightEye.rotationLocal = quat_exports.multiply(eyeRotation, this.restPose.rightEye, eyeRotation);
+      this.bones.rightEye.setRotationLocal(quat_exports.multiply(eyeRotation, this.restPose.rightEye, eyeRotation));
     }
   }
   _resolveConstraints() {
@@ -9976,10 +9994,10 @@ var Vrm = class extends Component25 {
     this._sphereColliders.forEach(({ object, shape, cache }) => {
       const offset2 = vec3_exports.copy(cache.head, shape.offset);
       object.transformVectorWorld(offset2);
-      vec3_exports.add(cache.head, object.getTranslationWorld(this._tempV3), offset2);
+      vec3_exports.add(cache.head, object.getPositionWorld(this._tempV3), offset2);
     });
     this._capsuleColliders.forEach(({ object, shape, cache }) => {
-      const shapeCenter = object.getTranslationWorld(this._tempV3A);
+      const shapeCenter = object.getPositionWorld(this._tempV3A);
       const headOffset = vec3_exports.copy(cache.head, shape.offset);
       object.transformVectorWorld(headOffset);
       vec3_exports.add(cache.head, shapeCenter, headOffset);
@@ -9990,7 +10008,9 @@ var Vrm = class extends Component25 {
     this._springChains.forEach((springChain) => {
       for (let i = 0; i < springChain.joints.length - 1; ++i) {
         const joint = springChain.joints[i];
-        const parentWorldRotation = joint.node.parent ? joint.node.parent.rotationWorld : this._identityQuat;
+        if (!joint.state)
+          continue;
+        const parentWorldRotation = joint.node.parent ? joint.node.parent.getRotationWorld(this._tempQuat) : this._identityQuat;
         const inertia = this._inertia;
         if (springChain.center) {
           vec3_exports.sub(inertia, joint.state.currentTailCenter, joint.state.prevTailCenter);
@@ -10008,7 +10028,7 @@ var Vrm = class extends Component25 {
         vec3_exports.add(nextTail, nextTail, inertia);
         vec3_exports.add(nextTail, nextTail, stiffness);
         vec3_exports.add(nextTail, nextTail, external);
-        const worldPosition = joint.node.getTranslationWorld(this._tempV3B);
+        const worldPosition = joint.node.getPositionWorld(this._tempV3B);
         vec3_exports.sub(nextTail, nextTail, worldPosition);
         vec3_exports.normalize(nextTail, nextTail);
         vec3_exports.scaleAndAdd(nextTail, worldPosition, nextTail, joint.state.boneLength);
@@ -10062,12 +10082,12 @@ var Vrm = class extends Component25 {
         quat2_exports.getTranslation(nextTail, nextTailDualQuat);
         vec3_exports.normalize(nextTail, nextTail);
         const jointRotation = quat_exports.rotationTo(this._tempQuatA, joint.state.boneAxis, nextTail);
-        joint.node.rotationLocal = quat_exports.mul(this._tempQuatA, joint.state.initialLocalRotation, jointRotation);
+        joint.node.setRotationLocal(quat_exports.mul(this._tempQuatA, joint.state.initialLocalRotation, jointRotation));
       }
     });
   }
   /**
-   * @param {boolean} firstPerson Whether the model should render for first person or third person views
+   * @param firstPerson Whether the model should render for first person or third person views
    */
   set firstPerson(firstPerson) {
     this._firstPersonAnnotations.forEach((annotation) => {
@@ -10079,17 +10099,17 @@ var Vrm = class extends Component25 {
   }
 };
 __publicField(Vrm, "TypeName", "vrm");
-__publicField(Vrm, "Properties", {
-  /** URL to a VRM file to load */
-  src: Property2.string(),
-  /** Object the VRM is looking at */
-  lookAtTarget: Property2.object()
-});
+__decorate16([
+  property16.string()
+], Vrm.prototype, "src", void 0);
+__decorate16([
+  property16.object()
+], Vrm.prototype, "lookAtTarget", void 0);
 
 // node_modules/@wonderlandengine/components/dist/wasd-controls.js
 import { Component as Component26 } from "@wonderlandengine/api";
-import { property as property16 } from "@wonderlandengine/api/decorators.js";
-var __decorate16 = function(decorators, target, key, desc) {
+import { property as property17 } from "@wonderlandengine/api/decorators.js";
+var __decorate17 = function(decorators, target, key, desc) {
   var c = arguments.length, r = c < 3 ? target : desc === null ? desc = Object.getOwnPropertyDescriptor(target, key) : desc, d;
   if (typeof Reflect === "object" && typeof Reflect.decorate === "function")
     r = Reflect.decorate(decorators, target, key, desc);
@@ -10163,20 +10183,20 @@ var WasdControlsComponent = class extends Component26 {
   }
 };
 __publicField(WasdControlsComponent, "TypeName", "wasd-controls");
-__decorate16([
-  property16.float(0.1)
+__decorate17([
+  property17.float(0.1)
 ], WasdControlsComponent.prototype, "speed", void 0);
-__decorate16([
-  property16.bool(false)
+__decorate17([
+  property17.bool(false)
 ], WasdControlsComponent.prototype, "lockY", void 0);
-__decorate16([
-  property16.object()
+__decorate17([
+  property17.object()
 ], WasdControlsComponent.prototype, "headObject", void 0);
 
 // node_modules/@wonderlandengine/components/dist/input-profile.js
 import { Component as Component27, Emitter as Emitter8 } from "@wonderlandengine/api";
-import { property as property17 } from "@wonderlandengine/api/decorators.js";
-var __decorate17 = function(decorators, target, key, desc) {
+import { property as property18 } from "@wonderlandengine/api/decorators.js";
+var __decorate18 = function(decorators, target, key, desc) {
   var c = arguments.length, r = c < 3 ? target : desc === null ? desc = Object.getOwnPropertyDescriptor(target, key) : desc, d;
   if (typeof Reflect === "object" && typeof Reflect.decorate === "function")
     r = Reflect.decorate(decorators, target, key, desc);
@@ -10381,6 +10401,8 @@ var _InputProfile = class extends Component27 {
     this._axes = [];
     for (const i in components) {
       const visualResponses = components[i].visualResponses;
+      if (components[i].rootNodeName === "menu")
+        continue;
       for (const j in visualResponses) {
         const visualResponse = visualResponses[j];
         const valueNode = visualResponse.valueNodeName;
@@ -10389,15 +10411,15 @@ var _InputProfile = class extends Component27 {
         this._gamepadObjects[valueNode] = obj.findByNameRecursive(valueNode)[0];
         this._gamepadObjects[minNode] = obj.findByNameRecursive(minNode)[0];
         this._gamepadObjects[maxNode] = obj.findByNameRecursive(maxNode)[0];
-        const indice = visualResponses[j].componentProperty;
+        const prop = visualResponses[j].componentProperty;
         const response = {
           target: this._gamepadObjects[valueNode],
           min: this._gamepadObjects[minNode],
           max: this._gamepadObjects[maxNode],
-          id: components[i].gamepadIndices[indice]
+          id: components[i].gamepadIndices[prop]
           // Assign a unique ID
         };
-        switch (indice) {
+        switch (prop) {
           case "button":
             this._buttons.push(response);
             break;
@@ -10446,32 +10468,32 @@ __publicField(InputProfile, "TypeName", "input-profile");
  * A cache to store loaded profiles for reuse.
  */
 __publicField(InputProfile, "Cache", /* @__PURE__ */ new Map());
-__decorate17([
-  property17.enum(hands, 0)
+__decorate18([
+  property18.enum(hands, 0)
 ], InputProfile.prototype, "handedness", void 0);
-__decorate17([
-  property17.string("https://cdn.jsdelivr.net/npm/@webxr-input-profiles/assets@latest/dist/profiles/")
+__decorate18([
+  property18.string("https://cdn.jsdelivr.net/npm/@webxr-input-profiles/assets@latest/dist/profiles/")
 ], InputProfile.prototype, "defaultBasePath", void 0);
-__decorate17([
-  property17.string()
+__decorate18([
+  property18.string()
 ], InputProfile.prototype, "customBasePath", void 0);
-__decorate17([
-  property17.object()
+__decorate18([
+  property18.object()
 ], InputProfile.prototype, "defaultController", void 0);
-__decorate17([
-  property17.object()
+__decorate18([
+  property18.object()
 ], InputProfile.prototype, "trackedHand", void 0);
-__decorate17([
-  property17.bool(false)
+__decorate18([
+  property18.bool(false)
 ], InputProfile.prototype, "mapToDefaultController", void 0);
-__decorate17([
-  property17.bool(true)
+__decorate18([
+  property18.bool(true)
 ], InputProfile.prototype, "addVrModeSwitch", void 0);
 
 // node_modules/@wonderlandengine/components/dist/orbital-camera.js
 import { Component as Component28 } from "@wonderlandengine/api";
-import { property as property18 } from "@wonderlandengine/api/decorators.js";
-var __decorate18 = function(decorators, target, key, desc) {
+import { property as property19 } from "@wonderlandengine/api/decorators.js";
+var __decorate19 = function(decorators, target, key, desc) {
   var c = arguments.length, r = c < 3 ? target : desc === null ? desc = Object.getOwnPropertyDescriptor(target, key) : desc, d;
   if (typeof Reflect === "object" && typeof Reflect.decorate === "function")
     r = Reflect.decorate(decorators, target, key, desc);
@@ -10703,35 +10725,35 @@ var OrbitalCamera = class extends Component28 {
   }
 };
 __publicField(OrbitalCamera, "TypeName", "orbital-camera");
-__decorate18([
-  property18.int()
+__decorate19([
+  property19.int()
 ], OrbitalCamera.prototype, "mouseButtonIndex", void 0);
-__decorate18([
-  property18.float(5)
+__decorate19([
+  property19.float(5)
 ], OrbitalCamera.prototype, "radial", void 0);
-__decorate18([
-  property18.float()
+__decorate19([
+  property19.float()
 ], OrbitalCamera.prototype, "minElevation", void 0);
-__decorate18([
-  property18.float(89.99)
+__decorate19([
+  property19.float(89.99)
 ], OrbitalCamera.prototype, "maxElevation", void 0);
-__decorate18([
-  property18.float()
+__decorate19([
+  property19.float()
 ], OrbitalCamera.prototype, "minZoom", void 0);
-__decorate18([
-  property18.float(10)
+__decorate19([
+  property19.float(10)
 ], OrbitalCamera.prototype, "maxZoom", void 0);
-__decorate18([
-  property18.float(0.5)
+__decorate19([
+  property19.float(0.5)
 ], OrbitalCamera.prototype, "xSensitivity", void 0);
-__decorate18([
-  property18.float(0.5)
+__decorate19([
+  property19.float(0.5)
 ], OrbitalCamera.prototype, "ySensitivity", void 0);
-__decorate18([
-  property18.float(0.02)
+__decorate19([
+  property19.float(0.02)
 ], OrbitalCamera.prototype, "zoomSensitivity", void 0);
-__decorate18([
-  property18.float(0.9)
+__decorate19([
+  property19.float(0.9)
 ], OrbitalCamera.prototype, "damping", void 0);
 
 // node_modules/wle-pp/dist/pp/index.js
@@ -11094,6 +11116,7 @@ __export(pp_exports, {
   VisualTransform: () => VisualTransform,
   VisualTransformParams: () => VisualTransformParams,
   WLComponentDefaultCloneCallbacks: () => WLComponentDefaultCloneCallbacks,
+  WLCursorTargetWrapperComponent: () => WLCursorTargetWrapperComponent,
   WaveFunction: () => WaveFunction,
   WidgetFrame: () => WidgetFrame,
   WidgetFrameConfig: () => WidgetFrameConfig,
@@ -11130,7 +11153,7 @@ __export(pp_exports, {
 });
 
 // node_modules/wle-pp/dist/pp/tool/easy_tune/easy_object_tuners/components/easy_active_component.js
-import { Component as Component29, property as property19 } from "@wonderlandengine/api";
+import { Component as Component29, property as property20 } from "@wonderlandengine/api";
 
 // node_modules/wle-pp/dist/pp/cauldron/wl/utils/component_utils.js
 import { AnimationComponent, CollisionComponent as CollisionComponent3, InputComponent as InputComponent2, LightComponent, MeshComponent as MeshComponent4, PhysXComponent, TextComponent as TextComponent2, ViewComponent as ViewComponent2 } from "@wonderlandengine/api";
@@ -15021,7 +15044,17 @@ var _setAxes = function() {
         QuatUtils.getForward(quat, currentAxis);
       }
       const angleBetween = Vec3Utils.angleRadians(firstAxis, currentAxis);
-      if (angleBetween > MathUtils.EPSILON) {
+      if (angleBetween > Math.PI - MathUtils.EPSILON) {
+        if (priority[1] == 0) {
+          QuatUtils.getLeft(quat, rotationAxis);
+        } else if (priority[1] == 1) {
+          QuatUtils.getUp(quat, rotationAxis);
+        } else {
+          QuatUtils.getForward(quat, rotationAxis);
+        }
+        QuatUtils.fromAxisRadians(Math.PI, rotationAxis, rotationQuat);
+        QuatUtils.rotateQuat(quat, rotationQuat, quat);
+      } else if (angleBetween > MathUtils.EPSILON) {
         Vec3Utils.cross(currentAxis, firstAxis, rotationAxis);
         Vec3Utils.normalize(rotationAxis, rotationAxis);
         if (Vec3Utils.isZero(rotationAxis)) {
@@ -19637,7 +19670,7 @@ var EasyActive = class extends EasyObjectTuner {
 };
 
 // node_modules/wle-pp/dist/pp/tool/easy_tune/easy_object_tuners/components/easy_active_component.js
-var __decorate19 = function(decorators, target, key, desc) {
+var __decorate20 = function(decorators, target, key, desc) {
   var c = arguments.length, r = c < 3 ? target : desc === null ? desc = Object.getOwnPropertyDescriptor(target, key) : desc, d;
   if (typeof Reflect === "object" && typeof Reflect.decorate === "function")
     r = Reflect.decorate(decorators, target, key, desc);
@@ -19681,14 +19714,14 @@ var EasyActiveComponent = class extends Component29 {
   }
 };
 __publicField(EasyActiveComponent, "TypeName", "pp-easy-active");
-__decorate19([
-  property19.string("")
+__decorate20([
+  property20.string("")
 ], EasyActiveComponent.prototype, "_myVariableName", void 0);
-__decorate19([
-  property19.bool(false)
+__decorate20([
+  property20.bool(false)
 ], EasyActiveComponent.prototype, "_mySetAsWidgetCurrentVariable", void 0);
-__decorate19([
-  property19.bool(false)
+__decorate20([
+  property20.bool(false)
 ], EasyActiveComponent.prototype, "_myUseTuneTarget", void 0);
 
 // node_modules/wle-pp/dist/pp/pp/register_pp_components.js
@@ -19697,10 +19730,10 @@ function registerPPComponents(engine) {
 }
 
 // node_modules/wle-pp/dist/pp/pp/components/pp_gateway_component.js
-import { Component as Component47, Property as Property15 } from "@wonderlandengine/api";
+import { Component as Component47, Property as Property14 } from "@wonderlandengine/api";
 
 // node_modules/wle-pp/dist/pp/audio/components/audio_manager_component.js
-import { Component as Component30, Property as Property3 } from "@wonderlandengine/api";
+import { Component as Component30, Property as Property2 } from "@wonderlandengine/api";
 
 // node_modules/wle-pp/dist/pp/audio/audio_manager.js
 var import_howler2 = __toESM(require_howler(), 1);
@@ -20058,12 +20091,12 @@ var AudioManagerComponent = class extends Component30 {
 };
 __publicField(AudioManagerComponent, "TypeName", "pp-audio-manager");
 __publicField(AudioManagerComponent, "Properties", {
-  _myPreloadAudio: Property3.bool(false),
-  _myStopAudioOnDeactivate: Property3.bool(false)
+  _myPreloadAudio: Property2.bool(false),
+  _myStopAudioOnDeactivate: Property2.bool(false)
 });
 
 // node_modules/wle-pp/dist/pp/cauldron/cauldron/components/analytics_manager_component.js
-import { Component as Component31, Property as Property4 } from "@wonderlandengine/api";
+import { Component as Component31, Property as Property3 } from "@wonderlandengine/api";
 
 // node_modules/wle-pp/dist/pp/cauldron/utils/xr_utils.js
 function getSession(engine = Globals.getMainEngine()) {
@@ -20474,12 +20507,12 @@ var AnalyticsManagerComponent = class extends Component31 {
 };
 __publicField(AnalyticsManagerComponent, "TypeName", "pp-analytics-manager");
 __publicField(AnalyticsManagerComponent, "Properties", {
-  _myDisableAnalyticsOnLocalhost: Property4.bool(true)
+  _myDisableAnalyticsOnLocalhost: Property3.bool(true)
 });
 
 // node_modules/wle-pp/dist/pp/cauldron/cauldron/components/clear_console_component.js
-import { Component as Component32, property as property20 } from "@wonderlandengine/api";
-var __decorate20 = function(decorators, target, key, desc) {
+import { Component as Component32, property as property21 } from "@wonderlandengine/api";
+var __decorate21 = function(decorators, target, key, desc) {
   var c = arguments.length, r = c < 3 ? target : desc === null ? desc = Object.getOwnPropertyDescriptor(target, key) : desc, d;
   if (typeof Reflect === "object" && typeof Reflect.decorate === "function")
     r = Reflect.decorate(decorators, target, key, desc);
@@ -20540,15 +20573,15 @@ var ClearConsoleComponent = class extends Component32 {
   }
 };
 __publicField(ClearConsoleComponent, "TypeName", "pp-clear-console");
-__decorate20([
-  property20.enum(["Init", "Start", "Update", "Enter XR", "Exit XR"], "Init")
+__decorate21([
+  property21.enum(["Init", "Start", "Update", "Enter XR", "Exit XR"], "Init")
 ], ClearConsoleComponent.prototype, "_myWhen", void 0);
-__decorate20([
-  property20.bool(true)
+__decorate21([
+  property21.bool(true)
 ], ClearConsoleComponent.prototype, "_myFirstTimeOnly", void 0);
 
 // node_modules/wle-pp/dist/pp/cauldron/cauldron/components/save_manager_component.js
-import { Component as Component33, Property as Property5 } from "@wonderlandengine/api";
+import { Component as Component33, Property as Property4 } from "@wonderlandengine/api";
 
 // node_modules/wle-pp/dist/pp/cauldron/cauldron/save_manager.js
 import { Emitter as Emitter11 } from "@wonderlandengine/api";
@@ -21200,8 +21233,8 @@ var SaveManagerComponent = class extends Component33 {
 };
 __publicField(SaveManagerComponent, "TypeName", "pp-save-manager");
 __publicField(SaveManagerComponent, "Properties", {
-  _mySaveID: Property5.string(""),
-  _myAutoLoadSaves: Property5.bool(true)
+  _mySaveID: Property4.string(""),
+  _myAutoLoadSaves: Property4.bool(true)
 });
 
 // node_modules/wle-pp/dist/pp/cauldron/object_pool/components/object_pool_manager_component.js
@@ -21450,6 +21483,7 @@ var ObjectPool = class {
       this._setActive(busyObject, false);
       this._myAvailableObjects.push(busyObject);
     }
+    this._myBusyObjects.pp_clear();
   }
   increase(amount) {
     this._addToPool(amount, false);
@@ -23519,7 +23553,7 @@ __publicField(VisualManagerComponent, "TypeName", "pp-visual-manager");
 
 // node_modules/wle-pp/dist/pp/cauldron/wl/components/add_wl_to_window_component.js
 import * as WLAPI from "@wonderlandengine/api";
-import { Component as Component36, Property as Property6 } from "@wonderlandengine/api";
+import { Component as Component36, Property as Property5 } from "@wonderlandengine/api";
 var AddWLToWindowComponent = class extends Component36 {
   start() {
     this._myWL = null;
@@ -23551,11 +23585,11 @@ var AddWLToWindowComponent = class extends Component36 {
 };
 __publicField(AddWLToWindowComponent, "TypeName", "pp-add-wl-to-window");
 __publicField(AddWLToWindowComponent, "Properties", {
-  _myAdd: Property6.bool(true)
+  _myAdd: Property5.bool(true)
 });
 
 // node_modules/wle-pp/dist/pp/cauldron/wl/getters/components/get_default_resources_component.js
-import { Component as Component37, Property as Property7 } from "@wonderlandengine/api";
+import { Component as Component37, Property as Property6 } from "@wonderlandengine/api";
 
 // node_modules/wle-pp/dist/pp/cauldron/wl/getters/default_resources.js
 var DefaultResources = class {
@@ -23634,20 +23668,20 @@ var GetDefaultResourcesComponent = class extends Component37 {
 };
 __publicField(GetDefaultResourcesComponent, "TypeName", "pp-get-default-resources");
 __publicField(GetDefaultResourcesComponent, "Properties", {
-  _myPlane: Property7.mesh(),
-  _myCube: Property7.mesh(),
-  _mySphere: Property7.mesh(),
-  _myCone: Property7.mesh(),
-  _myCylinder: Property7.mesh(),
-  _myCircle: Property7.mesh(),
-  _myFlatOpaque: Property7.material(),
-  _myFlatTransparentNoDepth: Property7.material(),
-  _myPhongOpaque: Property7.material(),
-  _myText: Property7.material()
+  _myPlane: Property6.mesh(),
+  _myCube: Property6.mesh(),
+  _mySphere: Property6.mesh(),
+  _myCone: Property6.mesh(),
+  _myCylinder: Property6.mesh(),
+  _myCircle: Property6.mesh(),
+  _myFlatOpaque: Property6.material(),
+  _myFlatTransparentNoDepth: Property6.material(),
+  _myPhongOpaque: Property6.material(),
+  _myText: Property6.material()
 });
 
 // node_modules/wle-pp/dist/pp/cauldron/wl/getters/components/get_scene_objects_component.js
-import { Component as Component38, Property as Property8 } from "@wonderlandengine/api";
+import { Component as Component38, Property as Property7 } from "@wonderlandengine/api";
 
 // node_modules/wle-pp/dist/pp/input/cauldron/input_types.js
 var Handedness;
@@ -23797,17 +23831,17 @@ var GetSceneObjectsComponent = class extends Component38 {
 };
 __publicField(GetSceneObjectsComponent, "TypeName", "pp-get-scene-objects");
 __publicField(GetSceneObjectsComponent, "Properties", {
-  _myRoot: Property8.object(),
-  _myScene: Property8.object(),
-  _myPlayer: Property8.object(),
-  _myReferenceSpace: Property8.object(),
+  _myRoot: Property7.object(),
+  _myScene: Property7.object(),
+  _myPlayer: Property7.object(),
+  _myReferenceSpace: Property7.object(),
   // If u don't have a pivot under the player you set this to null, by default will be the same as the player
-  _myCameraNonXR: Property8.object(),
-  _myEyeLeft: Property8.object(),
-  _myEyeRight: Property8.object(),
-  _myHandLeft: Property8.object(),
-  _myHandRight: Property8.object(),
-  _myHead: Property8.object()
+  _myCameraNonXR: Property7.object(),
+  _myEyeLeft: Property7.object(),
+  _myEyeRight: Property7.object(),
+  _myHandLeft: Property7.object(),
+  _myHandRight: Property7.object(),
+  _myHead: Property7.object()
 });
 
 // node_modules/wle-pp/dist/pp/debug/components/debug_manager_component.js
@@ -24082,7 +24116,7 @@ var DebugManagerComponent = class extends Component39 {
 __publicField(DebugManagerComponent, "TypeName", "pp-debug-manager");
 
 // node_modules/wle-pp/dist/pp/debug/components/enable_debug_component.js
-import { Component as Component40, Property as Property9 } from "@wonderlandengine/api";
+import { Component as Component40, Property as Property8 } from "@wonderlandengine/api";
 var EnableDebugComponent = class extends Component40 {
   start() {
     this._myHasDebugEnabled = this._myEnable;
@@ -24101,7 +24135,7 @@ var EnableDebugComponent = class extends Component40 {
 };
 __publicField(EnableDebugComponent, "TypeName", "pp-enable-debug");
 __publicField(EnableDebugComponent, "Properties", {
-  _myEnable: Property9.bool(true)
+  _myEnable: Property8.bool(true)
 });
 
 // node_modules/wle-pp/dist/pp/gameplay/experimental/character_controller/collision/components/character_collision_system_component.js
@@ -28654,7 +28688,7 @@ var CharacterCollisionSystemComponent = class extends Component41 {
 __publicField(CharacterCollisionSystemComponent, "TypeName", "pp-character-collision-system");
 
 // node_modules/wle-pp/dist/pp/input/cauldron/components/input_manager_component.js
-import { Component as Component42, Property as Property10 } from "@wonderlandengine/api";
+import { Component as Component42, Property as Property9 } from "@wonderlandengine/api";
 
 // node_modules/wle-pp/dist/pp/input/gamepad/gamepad.js
 import { Emitter as Emitter12 } from "@wonderlandengine/api";
@@ -29682,6 +29716,18 @@ var Keyboard = class {
     let pressed = false;
     if (this._myKeyInfos[keyID] != null) {
       pressed = this._myKeyInfos[keyID].myPressed;
+    }
+    return pressed;
+  }
+  isAnyKeyPressed() {
+    let pressed = false;
+    for (let i = 0; i < this._myKeyInfosIDs.length; i++) {
+      let id = this._myKeyInfosIDs[i];
+      let keyInfo = this._myKeyInfos[id];
+      if (keyInfo.myPressed) {
+        pressed = true;
+        break;
+      }
     }
     return pressed;
   }
@@ -31258,7 +31304,9 @@ import { ViewComponent as ViewComponent3 } from "@wonderlandengine/api";
 var MouseButtonID = {
   LEFT: 0,
   MIDDLE: 1,
-  RIGHT: 2
+  RIGHT: 2,
+  BACK: 3,
+  FORWARD: 4
 };
 var Mouse = class {
   constructor(engine = Globals.getMainEngine()) {
@@ -31407,7 +31455,7 @@ var Mouse = class {
   }
   isButtonPressed(buttonID) {
     let pressed = false;
-    if (this._myButtonInfosIDs[buttonID] != null) {
+    if (this._myButtonInfos[buttonID] != null) {
       pressed = this._myButtonInfos[buttonID].myPressed;
     }
     return pressed;
@@ -31426,14 +31474,14 @@ var Mouse = class {
   }
   isButtonPressStart(buttonID) {
     let pressStart = false;
-    if (this._myButtonInfosIDs[buttonID] != null) {
+    if (this._myButtonInfos[buttonID] != null) {
       pressStart = this._myButtonInfos[buttonID].myPressStart;
     }
     return pressStart;
   }
   isButtonPressEnd(buttonID = null) {
     let pressEnd = false;
-    if (this._myButtonInfosIDs[buttonID] != null) {
+    if (this._myButtonInfos[buttonID] != null) {
       pressEnd = this._myButtonInfos[buttonID].myPressEnd;
     }
     return pressEnd;
@@ -31612,14 +31660,14 @@ var Mouse = class {
   }
   _onPointerDown(event) {
     let buttonInfo = this._myButtonInfos[event.button];
-    if (!buttonInfo.myPressed) {
+    if (buttonInfo != null && !buttonInfo.myPressed) {
       buttonInfo.myPressed = true;
       buttonInfo.myPressStartToProcess = true;
     }
   }
   _onPointerUp(event) {
     let buttonInfo = this._myButtonInfos[event.button];
-    if (buttonInfo.myPressed) {
+    if (buttonInfo != null && buttonInfo.myPressed) {
       buttonInfo.myPressed = false;
       buttonInfo.myPressEndToProcess = true;
     }
@@ -32021,14 +32069,14 @@ var InputManagerComponent = class extends Component42 {
 };
 __publicField(InputManagerComponent, "TypeName", "pp-input-manager");
 __publicField(InputManagerComponent, "Properties", {
-  _myPoseForwardFixed: Property10.bool(true),
-  _myPreventMouseContextMenu: Property10.bool(true),
-  _myPreventMouseMiddleButtonScroll: Property10.bool(true),
-  _myEnableTrackedHandPoses: Property10.bool(true)
+  _myPoseForwardFixed: Property9.bool(true),
+  _myPreventMouseContextMenu: Property9.bool(true),
+  _myPreventMouseMiddleButtonScroll: Property9.bool(true),
+  _myEnableTrackedHandPoses: Property9.bool(true)
 });
 
 // node_modules/wle-pp/dist/pp/tool/cauldron/components/enable_tool_component.js
-import { Component as Component43, Property as Property11 } from "@wonderlandengine/api";
+import { Component as Component43, Property as Property10 } from "@wonderlandengine/api";
 var EnableToolComponent = class extends Component43 {
   start() {
     this._myHasToolEnabled = this._myEnable;
@@ -32047,11 +32095,11 @@ var EnableToolComponent = class extends Component43 {
 };
 __publicField(EnableToolComponent, "TypeName", "pp-enable-tool");
 __publicField(EnableToolComponent, "Properties", {
-  _myEnable: Property11.bool(true)
+  _myEnable: Property10.bool(true)
 });
 
 // node_modules/wle-pp/dist/pp/tool/console_vr/components/init_console_vr_component.js
-import { Component as Component44, Property as Property12 } from "@wonderlandengine/api";
+import { Component as Component44, Property as Property11 } from "@wonderlandengine/api";
 
 // node_modules/wle-pp/dist/pp/tool/console_vr/console_original_functions.js
 var _myConsoleOriginalLog = console.log;
@@ -32198,11 +32246,11 @@ var InitConsoleVRComponent = class extends Component44 {
 };
 __publicField(InitConsoleVRComponent, "TypeName", "pp-init-console-vr");
 __publicField(InitConsoleVRComponent, "Properties", {
-  _myInit: Property12.bool(true)
+  _myInit: Property11.bool(true)
 });
 
 // node_modules/wle-pp/dist/pp/tool/easy_tune/components/init_easy_tune_variables_component.js
-import { Component as Component45, Property as Property13 } from "@wonderlandengine/api";
+import { Component as Component45, Property as Property12 } from "@wonderlandengine/api";
 
 // node_modules/wle-pp/dist/pp/tool/easy_tune/easy_tune_variables.js
 var EasyTuneVariables = class {
@@ -32323,7 +32371,7 @@ var InitEasyTuneVariablesComponent = class extends Component45 {
 };
 __publicField(InitEasyTuneVariablesComponent, "TypeName", "pp-init-easy-tune-variables");
 __publicField(InitEasyTuneVariablesComponent, "Properties", {
-  _myInit: Property13.bool(true)
+  _myInit: Property12.bool(true)
 });
 
 // node_modules/wle-pp/dist/pp/cauldron/wl/register_wl_components.js
@@ -32376,16 +32424,16 @@ function getObjectPropertyDescriptor(object, propertyName) {
   return propertyDescriptor;
 }
 function getObjectProperty(object, propertyName) {
-  let property39 = void 0;
+  let property41 = void 0;
   let propertyDescriptor = JSUtils.getObjectPropertyDescriptor(object, propertyName);
   if (propertyDescriptor != null) {
     if (propertyDescriptor.get != null) {
-      property39 = propertyDescriptor.get.bind(object)();
+      property41 = propertyDescriptor.get.bind(object)();
     } else {
-      property39 = propertyDescriptor.value;
+      property41 = propertyDescriptor.value;
     }
   }
-  return property39;
+  return property41;
 }
 function setObjectProperty(valueToSet, object, propertyName) {
   let propertyDescriptor = JSUtils.getObjectPropertyDescriptor(object, propertyName);
@@ -32566,17 +32614,17 @@ function isObjectByName(objectParent, objectName) {
   }
   return isObjectResult;
 }
-function isFunction(property39) {
-  return typeof property39 == "function" && !JSUtils.isClass(property39);
+function isFunction(property41) {
+  return typeof property41 == "function" && !JSUtils.isClass(property41);
 }
 var isClass = function() {
   let checkClassRegex = new RegExp("^class");
-  return function isClass2(property39) {
-    return typeof property39 == "function" && property39.prototype != null && typeof property39.prototype.constructor == "function" && property39.toString != null && typeof property39.toString == "function" && property39.toString()?.match(checkClassRegex) != null;
+  return function isClass2(property41) {
+    return typeof property41 == "function" && property41.prototype != null && typeof property41.prototype.constructor == "function" && property41.toString != null && typeof property41.toString == "function" && property41.toString()?.match(checkClassRegex) != null;
   };
 }();
-function isObject(property39) {
-  return typeof property39 == "object";
+function isObject(property41) {
+  return typeof property41 == "object";
 }
 var JSUtils = {
   getObjectPrototypes,
@@ -35830,7 +35878,7 @@ function initPlugins() {
 }
 
 // node_modules/wle-pp/dist/pp/pp/pp_version.js
-var PP_VERSION = "0.8.0";
+var PP_VERSION = "0.8.2";
 
 // node_modules/wle-pp/dist/pp/pp/init_pp.js
 function initPP(engine) {
@@ -35843,7 +35891,7 @@ function initPP(engine) {
 }
 
 // node_modules/wle-pp/dist/pp/pp/components/add_pp_to_window_component.js
-import { Component as Component46, Property as Property14 } from "@wonderlandengine/api";
+import { Component as Component46, Property as Property13 } from "@wonderlandengine/api";
 var AddPPToWindowComponent = class extends Component46 {
   start() {
     this._myPP = null;
@@ -35874,7 +35922,7 @@ var AddPPToWindowComponent = class extends Component46 {
 };
 __publicField(AddPPToWindowComponent, "TypeName", "pp-add-pp-to-window");
 __publicField(AddPPToWindowComponent, "Properties", {
-  _myAdd: Property14.bool(true)
+  _myAdd: Property13.bool(true)
 });
 
 // node_modules/wle-pp/dist/pp/pp/components/pp_gateway_component.js
@@ -35984,11 +36032,11 @@ var PPGatewayComponent = class extends Component47 {
 };
 __publicField(PPGatewayComponent, "TypeName", "pp-gateway");
 __publicField(PPGatewayComponent, "Properties", {
-  _myEnableDebug: Property15.bool(true),
-  _myEnableTool: Property15.bool(true),
-  _myAddPPToWindow: Property15.bool(true),
-  _myAddWLToWindow: Property15.bool(true),
-  _myClearConsoleOnInit: Property15.bool(false),
+  _myEnableDebug: Property14.bool(true),
+  _myEnableTool: Property14.bool(true),
+  _myAddPPToWindow: Property14.bool(true),
+  _myAddWLToWindow: Property14.bool(true),
+  _myClearConsoleOnInit: Property14.bool(false),
   ...InputManagerComponent.Properties,
   ...AudioManagerComponent.Properties,
   ...VisualManagerComponent.Properties,
@@ -36083,7 +36131,7 @@ var SpatialAudioListenerComponent = class extends Component49 {
 __publicField(SpatialAudioListenerComponent, "TypeName", "pp-spatial-audio-listener");
 
 // node_modules/wle-pp/dist/pp/cauldron/benchmarks/benchmark_max_physx_component.js
-import { Component as Component50, PhysXComponent as PhysXComponent4, Property as Property16, Shape } from "@wonderlandengine/api";
+import { Component as Component50, PhysXComponent as PhysXComponent4, Property as Property15, Shape } from "@wonderlandengine/api";
 
 // node_modules/wle-pp/dist/pp/cauldron/physics/physics_collision_collector.js
 import { CollisionEventType, Emitter as Emitter17, PhysXComponent as PhysXComponent3 } from "@wonderlandengine/api";
@@ -36639,27 +36687,27 @@ var BenchmarkMaxPhysXComponent = class extends Component50 {
 };
 __publicField(BenchmarkMaxPhysXComponent, "TypeName", "pp-benchmark-max-physx");
 __publicField(BenchmarkMaxPhysXComponent, "Properties", {
-  _myStaticDomeSize: Property16.float(40),
-  _myStaticPhysXCount: Property16.int(1e3),
-  _myDynamicDomeSize: Property16.float(80),
-  _myDynamicPhysXCount: Property16.int(250),
-  _myKinematicDomeSize: Property16.float(120),
-  _myKinematicPhysXCount: Property16.int(250),
-  _myRaycastCount: Property16.int(100),
-  _myVisualizeRaycast: Property16.bool(false),
-  _myVisualizeRaycastDelay: Property16.float(0.5),
+  _myStaticDomeSize: Property15.float(40),
+  _myStaticPhysXCount: Property15.int(1e3),
+  _myDynamicDomeSize: Property15.float(80),
+  _myDynamicPhysXCount: Property15.int(250),
+  _myKinematicDomeSize: Property15.float(120),
+  _myKinematicPhysXCount: Property15.int(250),
+  _myRaycastCount: Property15.int(100),
+  _myVisualizeRaycast: Property15.bool(false),
+  _myVisualizeRaycastDelay: Property15.float(0.5),
   // You can use this to test with convex mesh, 
   // but u first need to add a physx with a convex mesh to the scene and read the shapeData index on the component to set it as _myShapeIndex
-  _myUseConvexMesh: Property16.bool(false),
-  _myShapeIndex: Property16.int(0),
-  _myShapeScaleMultiplier: Property16.float(1),
+  _myUseConvexMesh: Property15.bool(false),
+  _myShapeIndex: Property15.int(0),
+  _myShapeScaleMultiplier: Property15.float(1),
   // Used to adjust the scale of the convex mesh if too big or small based on how u imported it
-  _myLogEnabled: Property16.bool(true),
-  _myClearConsoleBeforeLog: Property16.bool(true)
+  _myLogEnabled: Property15.bool(true),
+  _myClearConsoleBeforeLog: Property15.bool(true)
 });
 
 // node_modules/wle-pp/dist/pp/cauldron/benchmarks/benchmark_max_visible_triangles_component.js
-import { Alignment as Alignment3, Component as Component51, MeshComponent as MeshComponent9, Property as Property17, TextComponent as TextComponent4, VerticalAlignment as VerticalAlignment3 } from "@wonderlandengine/api";
+import { Alignment as Alignment3, Component as Component51, MeshComponent as MeshComponent9, Property as Property16, TextComponent as TextComponent4, VerticalAlignment as VerticalAlignment3 } from "@wonderlandengine/api";
 var BenchmarkMaxVisibleTrianglesComponent = class extends Component51 {
   _start() {
     if (this._myPlaneMaterial == null) {
@@ -37028,27 +37076,27 @@ var BenchmarkMaxVisibleTrianglesComponent = class extends Component51 {
 };
 __publicField(BenchmarkMaxVisibleTrianglesComponent, "TypeName", "pp-benchmark-max-visible-triangles");
 __publicField(BenchmarkMaxVisibleTrianglesComponent, "Properties", {
-  _myTargetFrameRate: Property17.int(-1),
+  _myTargetFrameRate: Property16.int(-1),
   // -1 means it will auto detect it at start
-  _myTargetFrameRateThreshold: Property17.int(3),
-  _myStartPlaneCount: Property17.int(1),
-  _myPlaneTriangles: Property17.int(100),
-  _mySecondsBeforeDoubling: Property17.float(0.5),
+  _myTargetFrameRateThreshold: Property16.int(3),
+  _myStartPlaneCount: Property16.int(1),
+  _myPlaneTriangles: Property16.int(100),
+  _mySecondsBeforeDoubling: Property16.float(0.5),
   // Higher gives a better frame rate evaluation
-  _myDTHistoryToIgnorePercentage: Property17.float(0.25),
-  _myCloneMaterial: Property17.bool(false),
-  _myCloneMesh: Property17.bool(false),
-  _myLogEnabled: Property17.bool(true),
-  _myStartOnXRStart: Property17.bool(false),
-  _myDisplayInFrontOfPlayer: Property17.bool(true),
-  _myDisplayInFrontOfPlayerDistance: Property17.float(10),
-  _myPlaneMaterial: Property17.material(),
-  _myBackgroundMaterial: Property17.material(),
-  _myTextMaterial: Property17.material(null)
+  _myDTHistoryToIgnorePercentage: Property16.float(0.25),
+  _myCloneMaterial: Property16.bool(false),
+  _myCloneMesh: Property16.bool(false),
+  _myLogEnabled: Property16.bool(true),
+  _myStartOnXRStart: Property16.bool(false),
+  _myDisplayInFrontOfPlayer: Property16.bool(true),
+  _myDisplayInFrontOfPlayerDistance: Property16.float(10),
+  _myPlaneMaterial: Property16.material(),
+  _myBackgroundMaterial: Property16.material(),
+  _myTextMaterial: Property16.material(null)
 });
 
 // node_modules/wle-pp/dist/pp/cauldron/cauldron/components/adjust_hierarchy_physx_scale_component.js
-import { Component as Component52, PhysXComponent as PhysXComponent5, Property as Property18 } from "@wonderlandengine/api";
+import { Component as Component52, PhysXComponent as PhysXComponent5, Property as Property17 } from "@wonderlandengine/api";
 var AdjustHierarchyPhysXScaleComponent = class extends Component52 {
   init() {
     if (this.markedActive && this._myWhen == 0) {
@@ -37083,12 +37131,12 @@ var AdjustHierarchyPhysXScaleComponent = class extends Component52 {
 };
 __publicField(AdjustHierarchyPhysXScaleComponent, "TypeName", "pp-adjust-hierarchy-physx-scale");
 __publicField(AdjustHierarchyPhysXScaleComponent, "Properties", {
-  _myWhen: Property18.enum(["Init", "Start", "First Update"], "Start")
+  _myWhen: Property17.enum(["Init", "Start", "First Update"], "Start")
 });
 
 // node_modules/wle-pp/dist/pp/cauldron/cauldron/components/reset_local_transform_component.js
-import { Component as Component53, property as property21 } from "@wonderlandengine/api";
-var __decorate21 = function(decorators, target, key, desc) {
+import { Component as Component53, property as property22 } from "@wonderlandengine/api";
+var __decorate22 = function(decorators, target, key, desc) {
   var c = arguments.length, r = c < 3 ? target : desc === null ? desc = Object.getOwnPropertyDescriptor(target, key) : desc, d;
   if (typeof Reflect === "object" && typeof Reflect.decorate === "function")
     r = Reflect.decorate(decorators, target, key, desc);
@@ -37160,15 +37208,15 @@ var ResetLocalTransformComponent = class extends Component53 {
   }
 };
 __publicField(ResetLocalTransformComponent, "TypeName", "pp-reset-local-transform");
-__decorate21([
-  property21.enum(["Self", "Children", "Descendants", "Hierarchy"], "Self")
+__decorate22([
+  property22.enum(["Self", "Children", "Descendants", "Hierarchy"], "Self")
 ], ResetLocalTransformComponent.prototype, "_myResetLocalTransformOn", void 0);
-__decorate21([
-  property21.enum(["Init", "Start", "First Update", "Enter XR", "Exit XR", "First Enter XR", "First Exit XR"], "Init")
+__decorate22([
+  property22.enum(["Init", "Start", "First Update", "Enter XR", "Exit XR", "First Enter XR", "First Exit XR"], "Init")
 ], ResetLocalTransformComponent.prototype, "_myResetLocalTransformWhen", void 0);
 
 // node_modules/wle-pp/dist/pp/cauldron/cauldron/components/set_active_component.js
-import { Component as Component54, Property as Property19 } from "@wonderlandengine/api";
+import { Component as Component54, Property as Property18 } from "@wonderlandengine/api";
 var SetActiveComponent = class extends Component54 {
   init() {
     if (this.markedActive && this._mySetActiveWhen == 0) {
@@ -37233,14 +37281,14 @@ var SetActiveComponent = class extends Component54 {
 };
 __publicField(SetActiveComponent, "TypeName", "pp-set-active");
 __publicField(SetActiveComponent, "Properties", {
-  _myActive: Property19.bool(true),
-  _mySetActiveOn: Property19.enum(["Self", "Children", "Descendants", "Hierarchy"], "Hierarchy"),
-  _mySetActiveWhen: Property19.enum(["Init", "Start", "First Update", "Enter XR", "Exit XR", "First Enter XR", "First Exit XR"], "Init")
+  _myActive: Property18.bool(true),
+  _mySetActiveOn: Property18.enum(["Self", "Children", "Descendants", "Hierarchy"], "Hierarchy"),
+  _mySetActiveWhen: Property18.enum(["Init", "Start", "First Update", "Enter XR", "Exit XR", "First Enter XR", "First Exit XR"], "Init")
 });
 
 // node_modules/wle-pp/dist/pp/cauldron/cauldron/components/set_engine_log_level_component.js
-import { Component as Component55, LogLevel, property as property22 } from "@wonderlandengine/api";
-var __decorate22 = function(decorators, target, key, desc) {
+import { Component as Component55, LogLevel, property as property23 } from "@wonderlandengine/api";
+var __decorate23 = function(decorators, target, key, desc) {
   var c = arguments.length, r = c < 3 ? target : desc === null ? desc = Object.getOwnPropertyDescriptor(target, key) : desc, d;
   if (typeof Reflect === "object" && typeof Reflect.decorate === "function")
     r = Reflect.decorate(decorators, target, key, desc);
@@ -37273,19 +37321,19 @@ var SetEngineLogLevelComponent = class extends Component55 {
   }
 };
 __publicField(SetEngineLogLevelComponent, "TypeName", "pp-set-engine-log-level");
-__decorate22([
-  property22.bool(true)
+__decorate23([
+  property23.bool(true)
 ], SetEngineLogLevelComponent.prototype, "_myInfoEnabled", void 0);
-__decorate22([
-  property22.bool(true)
+__decorate23([
+  property23.bool(true)
 ], SetEngineLogLevelComponent.prototype, "_myWarnEnabled", void 0);
-__decorate22([
-  property22.bool(true)
+__decorate23([
+  property23.bool(true)
 ], SetEngineLogLevelComponent.prototype, "_myErrorEnabled", void 0);
 
 // node_modules/wle-pp/dist/pp/cauldron/cauldron/components/show_xr_buttons_component.js
-import { Component as Component56, property as property23 } from "@wonderlandengine/api";
-var __decorate23 = function(decorators, target, key, desc) {
+import { Component as Component56, property as property24 } from "@wonderlandengine/api";
+var __decorate24 = function(decorators, target, key, desc) {
   var c = arguments.length, r = c < 3 ? target : desc === null ? desc = Object.getOwnPropertyDescriptor(target, key) : desc, d;
   if (typeof Reflect === "object" && typeof Reflect.decorate === "function")
     r = Reflect.decorate(decorators, target, key, desc);
@@ -37435,17 +37483,17 @@ var ShowXRButtonsComponent = class extends Component56 {
   }
 };
 __publicField(ShowXRButtonsComponent, "TypeName", "pp-show-xr-buttons");
-__decorate23([
-  property23.bool(true)
+__decorate24([
+  property24.bool(true)
 ], ShowXRButtonsComponent.prototype, "_myShowVRButton", void 0);
-__decorate23([
-  property23.enum(Object.values(_ButtonBehaviorWhenNotAvailable), _ButtonBehaviorWhenNotAvailable.DISABLE)
+__decorate24([
+  property24.enum(Object.values(_ButtonBehaviorWhenNotAvailable), _ButtonBehaviorWhenNotAvailable.DISABLE)
 ], ShowXRButtonsComponent.prototype, "_myVRButtonBehaviorWhenNotAvailable", void 0);
-__decorate23([
-  property23.bool(true)
+__decorate24([
+  property24.bool(true)
 ], ShowXRButtonsComponent.prototype, "_myShowARButton", void 0);
-__decorate23([
-  property23.enum(Object.values(_ButtonBehaviorWhenNotAvailable), _ButtonBehaviorWhenNotAvailable.DISABLE)
+__decorate24([
+  property24.enum(Object.values(_ButtonBehaviorWhenNotAvailable), _ButtonBehaviorWhenNotAvailable.DISABLE)
 ], ShowXRButtonsComponent.prototype, "_myARButtonBehaviorWhenNotAvailable", void 0);
 
 // node_modules/wle-pp/dist/pp/cauldron/fsm/fsm.js
@@ -38459,6 +38507,33 @@ var AnalyticsUtils = {
   isErrorsLogEnabled
 };
 
+// node_modules/wle-pp/dist/pp/cauldron/wl/components/wl_cursor_target_wrapper_component.js
+import { Component as Component57, property as property25 } from "@wonderlandengine/api";
+var __decorate25 = function(decorators, target, key, desc) {
+  var c = arguments.length, r = c < 3 ? target : desc === null ? desc = Object.getOwnPropertyDescriptor(target, key) : desc, d;
+  if (typeof Reflect === "object" && typeof Reflect.decorate === "function")
+    r = Reflect.decorate(decorators, target, key, desc);
+  else
+    for (var i = decorators.length - 1; i >= 0; i--)
+      if (d = decorators[i])
+        r = (c < 3 ? d(r) : c > 3 ? d(target, key, r) : d(target, key)) || r;
+  return c > 3 && r && Object.defineProperty(target, key, r), r;
+};
+var WLCursorTargetWrapperComponent = class extends Component57 {
+  _myIsSurface;
+  cursorTargetComponent = null;
+  init() {
+    if (this.markedActive) {
+      this.cursorTargetComponent = this.object.pp_addComponent(CursorTarget);
+      this.cursorTargetComponent.isSurface = this._myIsSurface;
+    }
+  }
+};
+__publicField(WLCursorTargetWrapperComponent, "TypeName", "pp-wl-cursor-target-wrapper");
+__decorate25([
+  property25.bool(false)
+], WLCursorTargetWrapperComponent.prototype, "_myIsSurface", void 0);
+
 // node_modules/wle-pp/dist/pp/cauldron/wl/utils/material_utils.js
 import { MeshComponent as MeshComponent10, TextComponent as TextComponent5 } from "@wonderlandengine/api";
 var setAlpha = function() {
@@ -38593,8 +38668,8 @@ var TextUtils = {
 };
 
 // node_modules/wle-pp/dist/pp/debug/components/debug_transform_component.js
-import { Component as Component57, Property as Property20 } from "@wonderlandengine/api";
-var DebugTransformComponent = class extends Component57 {
+import { Component as Component58, Property as Property19 } from "@wonderlandengine/api";
+var DebugTransformComponent = class extends Component58 {
   start() {
     this._myStarted = false;
   }
@@ -38628,13 +38703,13 @@ var DebugTransformComponent = class extends Component57 {
 };
 __publicField(DebugTransformComponent, "TypeName", "pp-debug-transform");
 __publicField(DebugTransformComponent, "Properties", {
-  _myLength: Property20.float(0.1),
-  _myThickness: Property20.float(5e-3)
+  _myLength: Property19.float(0.1),
+  _myThickness: Property19.float(5e-3)
 });
 
 // node_modules/wle-pp/dist/pp/debug/components/show_fps_component.js
-import { Alignment as Alignment4, Component as Component58, Property as Property21, VerticalAlignment as VerticalAlignment4 } from "@wonderlandengine/api";
-var ShowFPSComponent = class extends Component58 {
+import { Alignment as Alignment4, Component as Component59, Property as Property20, VerticalAlignment as VerticalAlignment4 } from "@wonderlandengine/api";
+var ShowFPSComponent = class extends Component59 {
   start() {
     this._myColor = vec4_create(1, 1, 1, 1);
     if (this._myTextMaterial != null) {
@@ -38663,17 +38738,17 @@ var ShowFPSComponent = class extends Component58 {
 };
 __publicField(ShowFPSComponent, "TypeName", "pp-show-fps");
 __publicField(ShowFPSComponent, "Properties", {
-  _myRefreshSeconds: Property21.float(0.25),
-  _myScreenPositionX: Property21.float(1),
-  _myScreenPositionY: Property21.float(-1),
-  _myScreenPositionZ: Property21.float(1),
-  _myScale: Property21.float(1.5),
-  _myTextMaterial: Property21.material()
+  _myRefreshSeconds: Property20.float(0.25),
+  _myScreenPositionX: Property20.float(1),
+  _myScreenPositionY: Property20.float(-1),
+  _myScreenPositionZ: Property20.float(1),
+  _myScale: Property20.float(1.5),
+  _myTextMaterial: Property20.material()
 });
 
 // node_modules/wle-pp/dist/pp/debug/components/toggle_active_on_button_press_component.js
-import { Component as Component59, property as property24 } from "@wonderlandengine/api";
-var __decorate24 = function(decorators, target, key, desc) {
+import { Component as Component60, property as property26 } from "@wonderlandengine/api";
+var __decorate26 = function(decorators, target, key, desc) {
   var c = arguments.length, r = c < 3 ? target : desc === null ? desc = Object.getOwnPropertyDescriptor(target, key) : desc, d;
   if (typeof Reflect === "object" && typeof Reflect.decorate === "function")
     r = Reflect.decorate(decorators, target, key, desc);
@@ -38683,7 +38758,7 @@ var __decorate24 = function(decorators, target, key, desc) {
         r = (c < 3 ? d(r) : c > 3 ? d(target, key, r) : d(target, key)) || r;
   return c > 3 && r && Object.defineProperty(target, key, r), r;
 };
-var ToggleActiveOnButtonPressComponent = class extends Component59 {
+var ToggleActiveOnButtonPressComponent = class extends Component60 {
   _myHandedness;
   _myButton;
   _myMultiplePressCount;
@@ -38726,14 +38801,14 @@ var ToggleActiveOnButtonPressComponent = class extends Component59 {
   }
 };
 __publicField(ToggleActiveOnButtonPressComponent, "TypeName", "toggle-active-on-button-press");
-__decorate24([
-  property24.enum(["Left", "Right"], "Left")
+__decorate26([
+  property26.enum(["Left", "Right"], "Left")
 ], ToggleActiveOnButtonPressComponent.prototype, "_myHandedness", void 0);
-__decorate24([
-  property24.enum(["Select", "Squeeze", "Thumstick", "Top Button", "Bottom Button"], "Bottom Button")
+__decorate26([
+  property26.enum(["Select", "Squeeze", "Thumstick", "Top Button", "Bottom Button"], "Bottom Button")
 ], ToggleActiveOnButtonPressComponent.prototype, "_myButton", void 0);
-__decorate24([
-  property24.int(2)
+__decorate26([
+  property26.int(2)
 ], ToggleActiveOnButtonPressComponent.prototype, "_myMultiplePressCount", void 0);
 
 // node_modules/wle-pp/dist/pp/debug/debug_functions_overwriter/debug_functions_overwriter.js
@@ -39175,16 +39250,16 @@ var DebugFunctionsPerformanceAnalyzer = class extends DebugFunctionsOverwriter {
   resetResults() {
     this._updateDerivatesResults();
     this._updateMaxResults();
-    for (let property39 of this._myFunctionPerformanceAnalysisResults.keys()) {
-      this._myFunctionPerformanceAnalysisResults.get(property39).reset();
+    for (let property41 of this._myFunctionPerformanceAnalysisResults.keys()) {
+      this._myFunctionPerformanceAnalysisResults.get(property41).reset();
     }
     this._myExecutionTimes.myOverheadExecutionTimeSinceLastReset = 0;
     this._myTimeOfLastReset = window.performance.now();
   }
   resetMaxResults() {
     this._myMaxTimeElapsedSinceLastReset = 0;
-    for (let property39 of this._myFunctionPerformanceAnalysisMaxResults.keys()) {
-      this._myFunctionPerformanceAnalysisMaxResults.get(property39).reset();
+    for (let property41 of this._myFunctionPerformanceAnalysisMaxResults.keys()) {
+      this._myFunctionPerformanceAnalysisMaxResults.get(property41).reset();
     }
   }
   getResults(sortOrder = DebugFunctionsPerformanceAnalyzerSortOrder.NONE) {
@@ -39265,8 +39340,8 @@ var DebugFunctionsPerformanceAnalyzer = class extends DebugFunctionsOverwriter {
   _updateDerivatesResults() {
     let timeElapsedSinceLastReset = this.getTimeElapsedSinceLastReset();
     let beforeTime = window.performance.now();
-    for (let property39 of this._myFunctionPerformanceAnalysisResults.keys()) {
-      let results = this._myFunctionPerformanceAnalysisResults.get(property39);
+    for (let property41 of this._myFunctionPerformanceAnalysisResults.keys()) {
+      let results = this._myFunctionPerformanceAnalysisResults.get(property41);
       if (timeElapsedSinceLastReset != 0) {
         results.myTotalExecutionTimePercentage = results.myTotalExecutionTime / timeElapsedSinceLastReset;
       } else {
@@ -39288,13 +39363,13 @@ var DebugFunctionsPerformanceAnalyzer = class extends DebugFunctionsOverwriter {
   _updateMaxResults() {
     let beforeTime = window.performance.now();
     this._myMaxTimeElapsedSinceLastReset = Math.max(this._myMaxTimeElapsedSinceLastReset, this.getTimeElapsedSinceLastReset());
-    for (let property39 of this._myFunctionPerformanceAnalysisResults.keys()) {
-      if (this._myFunctionPerformanceAnalysisMaxResults.has(property39)) {
-        this._myFunctionPerformanceAnalysisMaxResults.get(property39).max(this._myFunctionPerformanceAnalysisResults.get(property39));
+    for (let property41 of this._myFunctionPerformanceAnalysisResults.keys()) {
+      if (this._myFunctionPerformanceAnalysisMaxResults.has(property41)) {
+        this._myFunctionPerformanceAnalysisMaxResults.get(property41).max(this._myFunctionPerformanceAnalysisResults.get(property41));
       } else {
         let maxResults = new DebugFunctionPerformanceAnalysisResults();
-        maxResults.copy(this._myFunctionPerformanceAnalysisResults.get(property39));
-        this._myFunctionPerformanceAnalysisMaxResults.set(property39, maxResults);
+        maxResults.copy(this._myFunctionPerformanceAnalysisResults.get(property41));
+        this._myFunctionPerformanceAnalysisMaxResults.set(property41, maxResults);
       }
     }
     this._myExecutionTimes.myOverheadExecutionTimeSinceLastReset += window.performance.now() - beforeTime;
@@ -39693,8 +39768,8 @@ var DebugFunctionsPerformanceAnalysisResultsLogger = class {
 };
 
 // node_modules/wle-pp/dist/pp/debug/debug_functions_overwriter/debug_functions_performance_analyzer/components/debug_functions_performance_analyzer_component.js
-import { Component as Component60, Property as Property22 } from "@wonderlandengine/api";
-var DebugFunctionsPerformanceAnalyzerComponent = class extends Component60 {
+import { Component as Component61, Property as Property21 } from "@wonderlandengine/api";
+var DebugFunctionsPerformanceAnalyzerComponent = class extends Component61 {
   init() {
     if (!this.markedActive)
       return;
@@ -39811,38 +39886,38 @@ var DebugFunctionsPerformanceAnalyzerComponent = class extends Component60 {
 };
 __publicField(DebugFunctionsPerformanceAnalyzerComponent, "TypeName", "pp-debug-functions-performance-analyzer");
 __publicField(DebugFunctionsPerformanceAnalyzerComponent, "Properties", {
-  _myObjectsByPath: Property22.string(""),
-  _myClassesByPath: Property22.string(""),
-  _myFunctionsByPath: Property22.string(""),
-  _myDelayStart: Property22.float(0),
-  _myLogTitle: Property22.string("Functions Performance Analysis Results"),
-  _myLogFunction: Property22.enum(["Log", "Error", "Warn", "Debug"], "Error"),
-  _mySecondsBetweenLogs: Property22.float(1),
-  _myLogMaxResults: Property22.bool(false),
-  _myLogSortOrder: Property22.enum(["None", "Calls Count", "Total Execution Time", "Average Execution Time"], "Calls Count"),
-  _myLogCallsCountResults: Property22.bool(true),
-  _myLogTotalExecutionTimeResults: Property22.bool(false),
-  _myLogTotalExecutionTimePercentageResults: Property22.bool(false),
-  _myLogAverageExecutionTimeResults: Property22.bool(false),
-  _myLogMaxAmountOfFunctions: Property22.int(-1),
-  _myLogFunctionsWithCallsCountAbove: Property22.int(0),
-  _myLogFunctionsWithTotalExecutionTimePercentageAbove: Property22.float(-1),
-  _myFunctionPathsToInclude: Property22.string(""),
-  _myFunctionPathsToExclude: Property22.string(""),
-  _myExcludeConstructors: Property22.bool(false),
-  _myExcludeJSObjectFunctions: Property22.bool(true),
-  _myAddPathPrefixToFunctionID: Property22.bool(true),
-  _myObjectAddObjectDescendantsDepthLevel: Property22.int(0),
-  _myObjectAddClassDescendantsDepthLevel: Property22.int(0),
-  _myClearConsoleBeforeLog: Property22.bool(false),
-  _myResetMaxResultsShortcutEnabled: Property22.bool(false),
-  _myClassesByReference: Property22.enum(["Code Driven"], "Code Driven"),
-  _myObjectsByReference: Property22.enum(["Code Driven"], "Code Driven")
+  _myObjectsByPath: Property21.string(""),
+  _myClassesByPath: Property21.string(""),
+  _myFunctionsByPath: Property21.string(""),
+  _myDelayStart: Property21.float(0),
+  _myLogTitle: Property21.string("Functions Performance Analysis Results"),
+  _myLogFunction: Property21.enum(["Log", "Error", "Warn", "Debug"], "Error"),
+  _mySecondsBetweenLogs: Property21.float(1),
+  _myLogMaxResults: Property21.bool(false),
+  _myLogSortOrder: Property21.enum(["None", "Calls Count", "Total Execution Time", "Average Execution Time"], "Calls Count"),
+  _myLogCallsCountResults: Property21.bool(true),
+  _myLogTotalExecutionTimeResults: Property21.bool(false),
+  _myLogTotalExecutionTimePercentageResults: Property21.bool(false),
+  _myLogAverageExecutionTimeResults: Property21.bool(false),
+  _myLogMaxAmountOfFunctions: Property21.int(-1),
+  _myLogFunctionsWithCallsCountAbove: Property21.int(0),
+  _myLogFunctionsWithTotalExecutionTimePercentageAbove: Property21.float(-1),
+  _myFunctionPathsToInclude: Property21.string(""),
+  _myFunctionPathsToExclude: Property21.string(""),
+  _myExcludeConstructors: Property21.bool(false),
+  _myExcludeJSObjectFunctions: Property21.bool(true),
+  _myAddPathPrefixToFunctionID: Property21.bool(true),
+  _myObjectAddObjectDescendantsDepthLevel: Property21.int(0),
+  _myObjectAddClassDescendantsDepthLevel: Property21.int(0),
+  _myClearConsoleBeforeLog: Property21.bool(false),
+  _myResetMaxResultsShortcutEnabled: Property21.bool(false),
+  _myClassesByReference: Property21.enum(["Code Driven"], "Code Driven"),
+  _myObjectsByReference: Property21.enum(["Code Driven"], "Code Driven")
 });
 
 // node_modules/wle-pp/dist/pp/debug/debug_functions_overwriter/debug_functions_performance_analyzer/components/debug_pp_functions_performance_analyzer_component.js
-import { Component as Component61, Property as Property23 } from "@wonderlandengine/api";
-var DebugPPFunctionsPerformanceAnalyzerComponent = class extends Component61 {
+import { Component as Component62, Property as Property22 } from "@wonderlandengine/api";
+var DebugPPFunctionsPerformanceAnalyzerComponent = class extends Component62 {
   init() {
     if (!this.markedActive)
       return;
@@ -39875,28 +39950,28 @@ var DebugPPFunctionsPerformanceAnalyzerComponent = class extends Component61 {
 };
 __publicField(DebugPPFunctionsPerformanceAnalyzerComponent, "TypeName", "pp-debug-pp-functions-performance-analyzer");
 __publicField(DebugPPFunctionsPerformanceAnalyzerComponent, "Properties", {
-  _myDelayStart: Property23.float(0),
-  _myLogFunction: Property23.enum(["Log", "Error", "Warn", "Debug"], "Error"),
-  _mySecondsBetweenLogs: Property23.float(1),
-  _myLogMaxResults: Property23.bool(false),
-  _myLogSortOrder: Property23.enum(["None", "Calls Count", "Total Execution Time", "Average Execution Time"], "Calls Count"),
-  _myLogCallsCountResults: Property23.bool(true),
-  _myLogTotalExecutionTimeResults: Property23.bool(false),
-  _myLogTotalExecutionTimePercentageResults: Property23.bool(false),
-  _myLogAverageExecutionTimeResults: Property23.bool(false),
-  _myLogMaxAmountOfFunctions: Property23.int(-1),
-  _myLogFunctionsWithCallsCountAbove: Property23.int(0),
-  _myLogFunctionsWithTotalExecutionTimePercentageAbove: Property23.float(-1),
-  _myFunctionPathsToInclude: Property23.string(""),
-  _myFunctionPathsToExclude: Property23.string(""),
-  _myExcludeConstructors: Property23.bool(false),
-  _myClearConsoleBeforeLog: Property23.bool(false),
-  _myResetMaxResultsShortcutEnabled: Property23.bool(false)
+  _myDelayStart: Property22.float(0),
+  _myLogFunction: Property22.enum(["Log", "Error", "Warn", "Debug"], "Error"),
+  _mySecondsBetweenLogs: Property22.float(1),
+  _myLogMaxResults: Property22.bool(false),
+  _myLogSortOrder: Property22.enum(["None", "Calls Count", "Total Execution Time", "Average Execution Time"], "Calls Count"),
+  _myLogCallsCountResults: Property22.bool(true),
+  _myLogTotalExecutionTimeResults: Property22.bool(false),
+  _myLogTotalExecutionTimePercentageResults: Property22.bool(false),
+  _myLogAverageExecutionTimeResults: Property22.bool(false),
+  _myLogMaxAmountOfFunctions: Property22.int(-1),
+  _myLogFunctionsWithCallsCountAbove: Property22.int(0),
+  _myLogFunctionsWithTotalExecutionTimePercentageAbove: Property22.float(-1),
+  _myFunctionPathsToInclude: Property22.string(""),
+  _myFunctionPathsToExclude: Property22.string(""),
+  _myExcludeConstructors: Property22.bool(false),
+  _myClearConsoleBeforeLog: Property22.bool(false),
+  _myResetMaxResultsShortcutEnabled: Property22.bool(false)
 });
 
 // node_modules/wle-pp/dist/pp/debug/debug_functions_overwriter/debug_functions_performance_analyzer/components/debug_array_functions_performance_analyzer_component.js
-import { Component as Component62, Property as Property24 } from "@wonderlandengine/api";
-var DebugArrayFunctionsPerformanceAnalyzerComponent = class extends Component62 {
+import { Component as Component63, Property as Property23 } from "@wonderlandengine/api";
+var DebugArrayFunctionsPerformanceAnalyzerComponent = class extends Component63 {
   init() {
     if (!this.markedActive)
       return;
@@ -39931,30 +40006,30 @@ var DebugArrayFunctionsPerformanceAnalyzerComponent = class extends Component62 
 };
 __publicField(DebugArrayFunctionsPerformanceAnalyzerComponent, "TypeName", "pp-debug-array-functions-performance-analyzer");
 __publicField(DebugArrayFunctionsPerformanceAnalyzerComponent, "Properties", {
-  _myIncludeOnlyMainArrayTypes: Property24.bool(true),
-  _myIncludeOnlyArrayExtensionFunctions: Property24.bool(false),
-  _myDelayStart: Property24.float(0),
-  _myLogFunction: Property24.enum(["Log", "Error", "Warn", "Debug"], "Error"),
-  _mySecondsBetweenLogs: Property24.float(1),
-  _myLogMaxResults: Property24.bool(false),
-  _myLogSortOrder: Property24.enum(["None", "Calls Count", "Total Execution Time", "Average Execution Time"], "Calls Count"),
-  _myLogCallsCountResults: Property24.bool(true),
-  _myLogTotalExecutionTimeResults: Property24.bool(false),
-  _myLogTotalExecutionTimePercentageResults: Property24.bool(false),
-  _myLogAverageExecutionTimeResults: Property24.bool(false),
-  _myLogMaxAmountOfFunctions: Property24.int(-1),
-  _myLogFunctionsWithCallsCountAbove: Property24.int(0),
-  _myLogFunctionsWithTotalExecutionTimePercentageAbove: Property24.float(-1),
-  _myFunctionPathsToInclude: Property24.string(""),
-  _myFunctionPathsToExclude: Property24.string(""),
-  _myExcludeConstructors: Property24.bool(false),
-  _myClearConsoleBeforeLog: Property24.bool(false),
-  _myResetMaxResultsShortcutEnabled: Property24.bool(false)
+  _myIncludeOnlyMainArrayTypes: Property23.bool(true),
+  _myIncludeOnlyArrayExtensionFunctions: Property23.bool(false),
+  _myDelayStart: Property23.float(0),
+  _myLogFunction: Property23.enum(["Log", "Error", "Warn", "Debug"], "Error"),
+  _mySecondsBetweenLogs: Property23.float(1),
+  _myLogMaxResults: Property23.bool(false),
+  _myLogSortOrder: Property23.enum(["None", "Calls Count", "Total Execution Time", "Average Execution Time"], "Calls Count"),
+  _myLogCallsCountResults: Property23.bool(true),
+  _myLogTotalExecutionTimeResults: Property23.bool(false),
+  _myLogTotalExecutionTimePercentageResults: Property23.bool(false),
+  _myLogAverageExecutionTimeResults: Property23.bool(false),
+  _myLogMaxAmountOfFunctions: Property23.int(-1),
+  _myLogFunctionsWithCallsCountAbove: Property23.int(0),
+  _myLogFunctionsWithTotalExecutionTimePercentageAbove: Property23.float(-1),
+  _myFunctionPathsToInclude: Property23.string(""),
+  _myFunctionPathsToExclude: Property23.string(""),
+  _myExcludeConstructors: Property23.bool(false),
+  _myClearConsoleBeforeLog: Property23.bool(false),
+  _myResetMaxResultsShortcutEnabled: Property23.bool(false)
 });
 
 // node_modules/wle-pp/dist/pp/debug/debug_functions_overwriter/debug_functions_performance_analyzer/components/debug_pp_array_creation_performance_analyzer_component.js
-import { Component as Component63, Property as Property25 } from "@wonderlandengine/api";
-var DebugPPArrayCreationPerformanceAnalyzerComponent = class extends Component63 {
+import { Component as Component64, Property as Property24 } from "@wonderlandengine/api";
+var DebugPPArrayCreationPerformanceAnalyzerComponent = class extends Component64 {
   init() {
     if (!this.markedActive)
       return;
@@ -39992,25 +40067,25 @@ var DebugPPArrayCreationPerformanceAnalyzerComponent = class extends Component63
 };
 __publicField(DebugPPArrayCreationPerformanceAnalyzerComponent, "TypeName", "pp-debug-pp-array-creation-performance-analyzer");
 __publicField(DebugPPArrayCreationPerformanceAnalyzerComponent, "Properties", {
-  _myDelayStart: Property25.float(0),
-  _myLogFunction: Property25.enum(["Log", "Error", "Warn", "Debug"], "Error"),
-  _mySecondsBetweenLogs: Property25.float(1),
-  _myLogMaxResults: Property25.bool(false),
-  _myLogSortOrder: Property25.enum(["None", "Calls Count", "Total Execution Time", "Average Execution Time"], "Calls Count"),
-  _myLogCallsCountResults: Property25.bool(true),
-  _myLogTotalExecutionTimeResults: Property25.bool(false),
-  _myLogTotalExecutionTimePercentageResults: Property25.bool(false),
-  _myLogAverageExecutionTimeResults: Property25.bool(false),
-  _myLogMaxAmountOfFunctions: Property25.int(-1),
-  _myLogFunctionsWithCallsCountAbove: Property25.int(0),
-  _myLogFunctionsWithTotalExecutionTimePercentageAbove: Property25.float(-1),
-  _myClearConsoleBeforeLog: Property25.bool(false),
-  _myResetMaxResultsShortcutEnabled: Property25.bool(false)
+  _myDelayStart: Property24.float(0),
+  _myLogFunction: Property24.enum(["Log", "Error", "Warn", "Debug"], "Error"),
+  _mySecondsBetweenLogs: Property24.float(1),
+  _myLogMaxResults: Property24.bool(false),
+  _myLogSortOrder: Property24.enum(["None", "Calls Count", "Total Execution Time", "Average Execution Time"], "Calls Count"),
+  _myLogCallsCountResults: Property24.bool(true),
+  _myLogTotalExecutionTimeResults: Property24.bool(false),
+  _myLogTotalExecutionTimePercentageResults: Property24.bool(false),
+  _myLogAverageExecutionTimeResults: Property24.bool(false),
+  _myLogMaxAmountOfFunctions: Property24.int(-1),
+  _myLogFunctionsWithCallsCountAbove: Property24.int(0),
+  _myLogFunctionsWithTotalExecutionTimePercentageAbove: Property24.float(-1),
+  _myClearConsoleBeforeLog: Property24.bool(false),
+  _myResetMaxResultsShortcutEnabled: Property24.bool(false)
 });
 
 // node_modules/wle-pp/dist/pp/debug/debug_functions_overwriter/debug_functions_performance_analyzer/components/debug_wl_function_performance_analyzer_component.js
-import { Component as Component64, Property as Property26 } from "@wonderlandengine/api";
-var DebugWLFunctionsPerformanceAnalyzerComponent = class extends Component64 {
+import { Component as Component65, Property as Property25 } from "@wonderlandengine/api";
+var DebugWLFunctionsPerformanceAnalyzerComponent = class extends Component65 {
   init() {
     if (!this.markedActive)
       return;
@@ -40043,28 +40118,28 @@ var DebugWLFunctionsPerformanceAnalyzerComponent = class extends Component64 {
 };
 __publicField(DebugWLFunctionsPerformanceAnalyzerComponent, "TypeName", "pp-debug-wl-functions-performance-analyzer");
 __publicField(DebugWLFunctionsPerformanceAnalyzerComponent, "Properties", {
-  _myDelayStart: Property26.float(0),
-  _myLogFunction: Property26.enum(["Log", "Error", "Warn", "Debug"], "Error"),
-  _mySecondsBetweenLogs: Property26.float(1),
-  _myLogMaxResults: Property26.bool(false),
-  _myLogSortOrder: Property26.enum(["None", "Calls Count", "Total Execution Time", "Average Execution Time"], "Calls Count"),
-  _myLogCallsCountResults: Property26.bool(true),
-  _myLogTotalExecutionTimeResults: Property26.bool(false),
-  _myLogTotalExecutionTimePercentageResults: Property26.bool(false),
-  _myLogAverageExecutionTimeResults: Property26.bool(false),
-  _myLogMaxAmountOfFunctions: Property26.int(-1),
-  _myLogFunctionsWithCallsCountAbove: Property26.int(0),
-  _myLogFunctionsWithTotalExecutionTimePercentageAbove: Property26.float(-1),
-  _myFunctionPathsToInclude: Property26.string(""),
-  _myFunctionPathsToExclude: Property26.string(""),
-  _myExcludeConstructors: Property26.bool(false),
-  _myClearConsoleBeforeLog: Property26.bool(false),
-  _myResetMaxResultsShortcutEnabled: Property26.bool(false)
+  _myDelayStart: Property25.float(0),
+  _myLogFunction: Property25.enum(["Log", "Error", "Warn", "Debug"], "Error"),
+  _mySecondsBetweenLogs: Property25.float(1),
+  _myLogMaxResults: Property25.bool(false),
+  _myLogSortOrder: Property25.enum(["None", "Calls Count", "Total Execution Time", "Average Execution Time"], "Calls Count"),
+  _myLogCallsCountResults: Property25.bool(true),
+  _myLogTotalExecutionTimeResults: Property25.bool(false),
+  _myLogTotalExecutionTimePercentageResults: Property25.bool(false),
+  _myLogAverageExecutionTimeResults: Property25.bool(false),
+  _myLogMaxAmountOfFunctions: Property25.int(-1),
+  _myLogFunctionsWithCallsCountAbove: Property25.int(0),
+  _myLogFunctionsWithTotalExecutionTimePercentageAbove: Property25.float(-1),
+  _myFunctionPathsToInclude: Property25.string(""),
+  _myFunctionPathsToExclude: Property25.string(""),
+  _myExcludeConstructors: Property25.bool(false),
+  _myClearConsoleBeforeLog: Property25.bool(false),
+  _myResetMaxResultsShortcutEnabled: Property25.bool(false)
 });
 
 // node_modules/wle-pp/dist/pp/debug/debug_functions_overwriter/debug_functions_performance_analyzer/components/debug_wl_components_function_performance_analyzer_component.js
-import { AnimationComponent as AnimationComponent2, CollisionComponent as CollisionComponent4, Component as Component65, InputComponent as InputComponent4, LightComponent as LightComponent2, MeshComponent as MeshComponent11, PhysXComponent as PhysXComponent6, Property as Property27, TextComponent as TextComponent7, ViewComponent as ViewComponent5 } from "@wonderlandengine/api";
-var DebugWLComponentsFunctionsPerformanceAnalyzerComponent = class extends Component65 {
+import { AnimationComponent as AnimationComponent2, CollisionComponent as CollisionComponent4, Component as Component66, InputComponent as InputComponent4, LightComponent as LightComponent2, MeshComponent as MeshComponent11, PhysXComponent as PhysXComponent6, Property as Property26, TextComponent as TextComponent7, ViewComponent as ViewComponent5 } from "@wonderlandengine/api";
+var DebugWLComponentsFunctionsPerformanceAnalyzerComponent = class extends Component66 {
   init() {
     if (!this.markedActive)
       return;
@@ -40161,26 +40236,26 @@ var DebugWLComponentsFunctionsPerformanceAnalyzerComponent = class extends Compo
 };
 __publicField(DebugWLComponentsFunctionsPerformanceAnalyzerComponent, "TypeName", "pp-debug-wl-components-functions-performance-analyzer");
 __publicField(DebugWLComponentsFunctionsPerformanceAnalyzerComponent, "Properties", {
-  _myAnalyzeComponentTypes: Property27.bool(true),
-  _myAnalyzeComponentInstances: Property27.bool(false),
-  _myComponentInstanceID: Property27.enum(["Object ID", "Object Name", "Object ID - Object Name"], "Object ID - Object Name"),
-  _myDelayStart: Property27.float(0),
-  _myLogFunction: Property27.enum(["Log", "Error", "Warn", "Debug"], "Error"),
-  _mySecondsBetweenLogs: Property27.float(1),
-  _myLogMaxResults: Property27.bool(false),
-  _myLogSortOrder: Property27.enum(["None", "Calls Count", "Total Execution Time", "Average Execution Time"], "Calls Count"),
-  _myLogCallsCountResults: Property27.bool(true),
-  _myLogTotalExecutionTimeResults: Property27.bool(false),
-  _myLogTotalExecutionTimePercentageResults: Property27.bool(false),
-  _myLogAverageExecutionTimeResults: Property27.bool(false),
-  _myLogMaxAmountOfFunctions: Property27.int(-1),
-  _myLogFunctionsWithCallsCountAbove: Property27.int(0),
-  _myLogFunctionsWithTotalExecutionTimePercentageAbove: Property27.float(-1),
-  _myFunctionPathsToInclude: Property27.string(""),
-  _myFunctionPathsToExclude: Property27.string(""),
-  _myExcludeConstructors: Property27.bool(false),
-  _myClearConsoleBeforeLog: Property27.bool(false),
-  _myResetMaxResultsShortcutEnabled: Property27.bool(false)
+  _myAnalyzeComponentTypes: Property26.bool(true),
+  _myAnalyzeComponentInstances: Property26.bool(false),
+  _myComponentInstanceID: Property26.enum(["Object ID", "Object Name", "Object ID - Object Name"], "Object ID - Object Name"),
+  _myDelayStart: Property26.float(0),
+  _myLogFunction: Property26.enum(["Log", "Error", "Warn", "Debug"], "Error"),
+  _mySecondsBetweenLogs: Property26.float(1),
+  _myLogMaxResults: Property26.bool(false),
+  _myLogSortOrder: Property26.enum(["None", "Calls Count", "Total Execution Time", "Average Execution Time"], "Calls Count"),
+  _myLogCallsCountResults: Property26.bool(true),
+  _myLogTotalExecutionTimeResults: Property26.bool(false),
+  _myLogTotalExecutionTimePercentageResults: Property26.bool(false),
+  _myLogAverageExecutionTimeResults: Property26.bool(false),
+  _myLogMaxAmountOfFunctions: Property26.int(-1),
+  _myLogFunctionsWithCallsCountAbove: Property26.int(0),
+  _myLogFunctionsWithTotalExecutionTimePercentageAbove: Property26.float(-1),
+  _myFunctionPathsToInclude: Property26.string(""),
+  _myFunctionPathsToExclude: Property26.string(""),
+  _myExcludeConstructors: Property26.bool(false),
+  _myClearConsoleBeforeLog: Property26.bool(false),
+  _myResetMaxResultsShortcutEnabled: Property26.bool(false)
 });
 
 // node_modules/wle-pp/dist/pp/gameplay/cauldron/cauldron/direction_2D_to_3D_converter.js
@@ -40659,6 +40734,10 @@ var AnimatedNumber = class {
       this._myStartValue = this._myCurrentValue;
       if (this._myAnimationTimer.isRunning() && this._myParams.myKeepAnimationEasingProgressOnTargetUpdate) {
         this._myEasingStartValueToUse = this._myEasingNextStartValueToUse;
+        const maxValue = 1 - MathUtils.EPSILON;
+        if (this._myEasingStartValueToUse >= maxValue || this._myParams.myAnimationEasingFunction(this._myEasingStartValueToUse) >= maxValue) {
+          this._myEasingStartValueToUse = 0;
+        }
       } else {
         this._myEasingStartValueToUse = 0;
       }
@@ -40681,8 +40760,8 @@ var AnimatedNumber = class {
 };
 
 // node_modules/wle-pp/dist/pp/gameplay/cauldron/cauldron/components/cursor_button_component.js
-import { Component as Component66, MeshComponent as MeshComponent12, property as property25, TextComponent as TextComponent8 } from "@wonderlandengine/api";
-var __decorate25 = function(decorators, target, key, desc) {
+import { Component as Component67, MeshComponent as MeshComponent12, property as property27, TextComponent as TextComponent8 } from "@wonderlandengine/api";
+var __decorate27 = function(decorators, target, key, desc) {
   var c = arguments.length, r = c < 3 ? target : desc === null ? desc = Object.getOwnPropertyDescriptor(target, key) : desc, d;
   if (typeof Reflect === "object" && typeof Reflect.decorate === "function")
     r = Reflect.decorate(decorators, target, key, desc);
@@ -40699,7 +40778,7 @@ var CursorButtonState;
   CursorButtonState2[CursorButtonState2["DOWN"] = 2] = "DOWN";
   CursorButtonState2[CursorButtonState2["UP"] = 3] = "UP";
 })(CursorButtonState || (CursorButtonState = {}));
-var _CursorButtonComponent = class extends Component66 {
+var _CursorButtonComponent = class extends Component67 {
   /** This can be either a name of a component that is found on the same object of the cursor button,
       or the name of an handler added through `CursorButtonComponent.addButtonActionHandler` */
   _myButtonActionsHandlerNames;
@@ -40901,6 +40980,8 @@ var _CursorButtonComponent = class extends Component66 {
     }
   }
   _onUnhover(targetObject, cursorComponent) {
+    if (cursorComponent instanceof FingerCursor)
+      return;
     this._myHoverCursors.pp_removeEqual(cursorComponent);
     const cursorWasDown = this._myDownCursors.pp_removeEqual(cursorComponent);
     const isMainCursorDown = this._myDownCursors.length == 0 && cursorWasDown || this._myMainDownCursor == cursorComponent && !this._myUpCursorIsMainOnlyIfLastDown && !this._myUpWithSecondaryCursorIsMain;
@@ -40920,11 +41001,15 @@ var _CursorButtonComponent = class extends Component66 {
     }
   }
   _onHover(targetObject, cursorComponent) {
+    if (cursorComponent instanceof FingerCursor)
+      return;
     const isSecondaryCursor = this._myHoverCursors.length > 0;
     this._myHoverCursors.pp_pushUnique(cursorComponent);
     this._addToTransitionQueue("hover", cursorComponent, isSecondaryCursor, false, this._onHoverStart.bind(this, null, null, cursorComponent, true, false));
   }
   _onDown(targetObject, cursorComponent) {
+    if (cursorComponent instanceof FingerCursor)
+      return;
     const isSecondaryCursor = this._myMainDownCursor != null && this._myMainDownCursor != cursorComponent;
     if (this._myMainDownCursor == null) {
       this._myMainDownCursor = cursorComponent;
@@ -41246,91 +41331,91 @@ __publicField(CursorButtonComponent, "_updateSV", {
   hsvColor: vec4_create(),
   rgbColor: vec4_create()
 });
-__decorate25([
-  property25.string("")
+__decorate27([
+  property27.string("")
 ], CursorButtonComponent.prototype, "_myButtonActionsHandlerNames", void 0);
-__decorate25([
-  property25.float(0.075)
+__decorate27([
+  property27.float(0.075)
 ], CursorButtonComponent.prototype, "_myScaleOffsetOnHover", void 0);
-__decorate25([
-  property25.float(-0.075)
+__decorate27([
+  property27.float(-0.075)
 ], CursorButtonComponent.prototype, "_myScaleOffsetOnDown", void 0);
-__decorate25([
-  property25.float(0.075)
+__decorate27([
+  property27.float(0.075)
 ], CursorButtonComponent.prototype, "_myScaleOffsetOnUp", void 0);
-__decorate25([
-  property25.float(0.1)
+__decorate27([
+  property27.float(0.1)
 ], CursorButtonComponent.prototype, "_myPulseIntensityOnHover", void 0);
-__decorate25([
-  property25.float(0)
+__decorate27([
+  property27.float(0)
 ], CursorButtonComponent.prototype, "_myPulseIntensityOnDown", void 0);
-__decorate25([
-  property25.float(0.1)
+__decorate27([
+  property27.float(0.1)
 ], CursorButtonComponent.prototype, "_myPulseIntensityOnUp", void 0);
-__decorate25([
-  property25.float(0)
+__decorate27([
+  property27.float(0)
 ], CursorButtonComponent.prototype, "_myPulseIntensityOnUnhover", void 0);
-__decorate25([
-  property25.float(-0.1)
+__decorate27([
+  property27.float(-0.1)
 ], CursorButtonComponent.prototype, "_myColorBrigthnessOffsetOnHover", void 0);
-__decorate25([
-  property25.float(0)
+__decorate27([
+  property27.float(0)
 ], CursorButtonComponent.prototype, "_myColorBrigthnessOffsetOnDown", void 0);
-__decorate25([
-  property25.float(-0.1)
+__decorate27([
+  property27.float(-0.1)
 ], CursorButtonComponent.prototype, "_myColorBrigthnessOffsetOnUp", void 0);
-__decorate25([
-  property25.bool(true)
+__decorate27([
+  property27.bool(true)
 ], CursorButtonComponent.prototype, "_myUseSpatialAudio", void 0);
-__decorate25([
-  property25.float(1.5)
+__decorate27([
+  property27.float(1.5)
 ], CursorButtonComponent.prototype, "_mySpatialAudioReferenceDistance", void 0);
-__decorate25([
-  property25.string("")
+__decorate27([
+  property27.string("")
 ], CursorButtonComponent.prototype, "_mySFXOnHover", void 0);
-__decorate25([
-  property25.string("")
+__decorate27([
+  property27.string("")
 ], CursorButtonComponent.prototype, "_mySFXOnDown", void 0);
-__decorate25([
-  property25.string("")
+__decorate27([
+  property27.string("")
 ], CursorButtonComponent.prototype, "_mySFXOnUp", void 0);
-__decorate25([
-  property25.string("")
+__decorate27([
+  property27.string("")
 ], CursorButtonComponent.prototype, "_mySFXOnUnhover", void 0);
-__decorate25([
-  property25.float(0)
+__decorate27([
+  property27.float(0)
 ], CursorButtonComponent.prototype, "_myMinHoverSecond", void 0);
-__decorate25([
-  property25.float(0.15)
+__decorate27([
+  property27.float(0.15)
 ], CursorButtonComponent.prototype, "_myMinDownSecond", void 0);
-__decorate25([
-  property25.float(0)
+__decorate27([
+  property27.float(0)
 ], CursorButtonComponent.prototype, "_myMinUpSecond", void 0);
-__decorate25([
-  property25.float(0)
+__decorate27([
+  property27.float(0)
 ], CursorButtonComponent.prototype, "_myMinUnhoverSecond", void 0);
-__decorate25([
-  property25.bool(true)
+__decorate27([
+  property27.bool(true)
 ], CursorButtonComponent.prototype, "_myPerformDefaultSecondaryCursorFeedbackOnHover", void 0);
-__decorate25([
-  property25.bool(true)
+__decorate27([
+  property27.bool(true)
 ], CursorButtonComponent.prototype, "_myPerformDefaultSecondaryCursorFeedbackOnDown", void 0);
-__decorate25([
-  property25.bool(true)
+__decorate27([
+  property27.bool(true)
 ], CursorButtonComponent.prototype, "_myPerformDefaultSecondaryCursorFeedbackOnUp", void 0);
-__decorate25([
-  property25.bool(true)
+__decorate27([
+  property27.bool(true)
 ], CursorButtonComponent.prototype, "_myPerformDefaultSecondaryCursorFeedbackOnUnhover", void 0);
-__decorate25([
-  property25.bool(false)
+__decorate27([
+  property27.bool(false)
 ], CursorButtonComponent.prototype, "_myUpCursorIsMainOnlyIfLastDown", void 0);
-__decorate25([
-  property25.bool(false)
+__decorate27([
+  property27.bool(false)
 ], CursorButtonComponent.prototype, "_myUpWithSecondaryCursorIsMain", void 0);
 
 // node_modules/wle-pp/dist/pp/gameplay/cauldron/rough/components/scale_on_spawn_component.js
-import { Component as Component67, Property as Property28 } from "@wonderlandengine/api";
-var ScaleOnSpawnComponent = class extends Component67 {
+import { Component as Component68, Property as Property27 } from "@wonderlandengine/api";
+var ScaleOnSpawnComponent = class extends Component68 {
   init() {
     this._myTargetScale = vec3_create(1, 1, 1);
   }
@@ -41357,13 +41442,13 @@ var ScaleOnSpawnComponent = class extends Component67 {
 };
 __publicField(ScaleOnSpawnComponent, "TypeName", "pp-scale-on-spawn");
 __publicField(ScaleOnSpawnComponent, "Properties", {
-  _myStartDelay: Property28.float(0),
-  _myScaleDuration: Property28.float(0)
+  _myStartDelay: Property27.float(0),
+  _myScaleDuration: Property27.float(0)
 });
 
 // node_modules/wle-pp/dist/pp/gameplay/grab_throw/grabbable_component.js
-import { Component as Component68, Emitter as Emitter19, PhysXComponent as PhysXComponent7, Property as Property29 } from "@wonderlandengine/api";
-var GrabbableComponent = class extends Component68 {
+import { Component as Component69, Emitter as Emitter19, PhysXComponent as PhysXComponent7, Property as Property28 } from "@wonderlandengine/api";
+var GrabbableComponent = class extends Component69 {
   init() {
     this._myGrabbed = false;
     this._myGrabber = null;
@@ -41484,15 +41569,15 @@ var GrabbableComponent = class extends Component68 {
 };
 __publicField(GrabbableComponent, "TypeName", "pp-grabbable");
 __publicField(GrabbableComponent, "Properties", {
-  _myThrowLinearVelocityMultiplier: Property29.float(1),
-  _myThrowAngularVelocityMultiplier: Property29.float(1),
-  _myKinematicValueOnRelease: Property29.enum(["True", "False", "Own"], "False"),
-  _myParentOnRelease: Property29.enum(["Scene", "Own"], "Own")
+  _myThrowLinearVelocityMultiplier: Property28.float(1),
+  _myThrowAngularVelocityMultiplier: Property28.float(1),
+  _myKinematicValueOnRelease: Property28.enum(["True", "False", "Own"], "False"),
+  _myParentOnRelease: Property28.enum(["Scene", "Own"], "Own")
 });
 
 // node_modules/wle-pp/dist/pp/gameplay/grab_throw/grabber_hand_component.js
-import { Component as Component69, Emitter as Emitter20, PhysXComponent as PhysXComponent8, Property as Property30 } from "@wonderlandengine/api";
-var GrabberHandComponent = class extends Component69 {
+import { Component as Component70, Emitter as Emitter20, PhysXComponent as PhysXComponent8, Property as Property29 } from "@wonderlandengine/api";
+var GrabberHandComponent = class extends Component70 {
   init() {
     this._myGrabbables = [];
     this._myGamepad = null;
@@ -41746,25 +41831,25 @@ var GrabberHandComponent = class extends Component69 {
 };
 __publicField(GrabberHandComponent, "TypeName", "pp-grabber-hand");
 __publicField(GrabberHandComponent, "Properties", {
-  _myHandedness: Property30.enum(["Left", "Right"], "Left"),
-  _myGrabButton: Property30.enum(["Select", "Squeeze", "Both", "Both Exclusive"], "Squeeze"),
+  _myHandedness: Property29.enum(["Left", "Right"], "Left"),
+  _myGrabButton: Property29.enum(["Select", "Squeeze", "Both", "Both Exclusive"], "Squeeze"),
   // @"Both Exclusive" means u can use both buttons but you have to use the same button you grabbed with to throw
-  _mySnapGrabbableToOrigin: Property30.bool(false),
-  _myMaxNumberOfObjects: Property30.int(1),
+  _mySnapGrabbableToOrigin: Property29.bool(false),
+  _myMaxNumberOfObjects: Property29.int(1),
   // How many objects you can grab at the same time
   // ADVANCED SETTINGS
-  _myThrowVelocitySource: Property30.enum(["Hand", "Grabbable"], "Hand"),
-  _myThrowLinearVelocityMultiplier: Property30.float(1),
+  _myThrowVelocitySource: Property29.enum(["Hand", "Grabbable"], "Hand"),
+  _myThrowLinearVelocityMultiplier: Property29.float(1),
   // Multiply the overall throw speed, so slow throws will be multiplied too
-  _myThrowMaxLinearSpeed: Property30.float(15),
-  _myThrowAngularVelocityMultiplier: Property30.float(0.5),
-  _myThrowMaxAngularSpeed: Property30.float(1080),
+  _myThrowMaxLinearSpeed: Property29.float(15),
+  _myThrowAngularVelocityMultiplier: Property29.float(0.5),
+  _myThrowMaxAngularSpeed: Property29.float(1080),
   // @Degrees
-  _myThrowLinearVelocityBoost: Property30.float(1.75),
+  _myThrowLinearVelocityBoost: Property29.float(1.75),
   // This boost is applied from 0% to 100% based on how fast you throw, so slow throws are not affected
-  _myThrowLinearVelocityBoostMinSpeedThreshold: Property30.float(0.6),
+  _myThrowLinearVelocityBoostMinSpeedThreshold: Property29.float(0.6),
   // 0% boost is applied if plain throw speed is under this value
-  _myThrowLinearVelocityBoostMaxSpeedThreshold: Property30.float(2.5)
+  _myThrowLinearVelocityBoostMaxSpeedThreshold: Property29.float(2.5)
   // 100% boost is applied if plain throw speed is over this value
 });
 var _GrabberHandComponentGrabbableData = class {
@@ -42228,8 +42313,8 @@ var CADummyServer = class {
 };
 
 // node_modules/wle-pp/dist/pp/gameplay/integrations/construct_arcade/ca_display_leaderboard_component.js
-import { Component as Component70, Property as Property31, TextComponent as TextComponent9 } from "@wonderlandengine/api";
-var CADisplayLeaderboardComponent = class extends Component70 {
+import { Component as Component71, Property as Property30, TextComponent as TextComponent9 } from "@wonderlandengine/api";
+var CADisplayLeaderboardComponent = class extends Component71 {
   init() {
     this._myUsernamesTextComponent = null;
     this._myScoresTextComponent = null;
@@ -42340,16 +42425,16 @@ var CADisplayLeaderboardComponent = class extends Component70 {
 };
 __publicField(CADisplayLeaderboardComponent, "TypeName", "pp-ca-display-leaderboard");
 __publicField(CADisplayLeaderboardComponent, "Properties", {
-  _myUsernamesTextObject: Property31.object(),
-  _myScoresTextObject: Property31.object(),
-  _myLeaderboardID: Property31.string(""),
-  _myLocal: Property31.bool(false),
-  _myAscending: Property31.bool(false),
-  _myScoresAmount: Property31.int(10),
-  _myScoreFormat: Property31.enum(["Value", "Hours:Minutes:Seconds", "Minutes:Seconds", "Seconds", "Hours:Minutes", "Minutes"], "Value"),
-  _myPositionAndUsernameSeparator: Property31.string(" - "),
-  _myNumberOfLinesBetweenScores: Property31.int(1),
-  _myAddDefaultCADummyServer: Property31.bool(false)
+  _myUsernamesTextObject: Property30.object(),
+  _myScoresTextObject: Property30.object(),
+  _myLeaderboardID: Property30.string(""),
+  _myLocal: Property30.bool(false),
+  _myAscending: Property30.bool(false),
+  _myScoresAmount: Property30.int(10),
+  _myScoreFormat: Property30.enum(["Value", "Hours:Minutes:Seconds", "Minutes:Seconds", "Seconds", "Hours:Minutes", "Minutes"], "Value"),
+  _myPositionAndUsernameSeparator: Property30.string(" - "),
+  _myNumberOfLinesBetweenScores: Property30.int(1),
+  _myAddDefaultCADummyServer: Property30.bool(false)
 });
 
 // node_modules/wle-pp/dist/pp/gameplay/experimental/character_controller/collision/legacy/collision_check/collision_check_utils.js
@@ -49202,8 +49287,8 @@ PlayerLocomotionSmooth.prototype._onXRSessionEnd = function() {
 }();
 
 // node_modules/wle-pp/dist/pp/gameplay/experimental/locomotion/legacy/locomotion/components/player_locomotion_component.js
-import { Component as Component71, property as property26 } from "@wonderlandengine/api";
-var __decorate26 = function(decorators, target, key, desc) {
+import { Component as Component72, property as property28 } from "@wonderlandengine/api";
+var __decorate28 = function(decorators, target, key, desc) {
   var c = arguments.length, r = c < 3 ? target : desc === null ? desc = Object.getOwnPropertyDescriptor(target, key) : desc, d;
   if (typeof Reflect === "object" && typeof Reflect.decorate === "function")
     r = Reflect.decorate(decorators, target, key, desc);
@@ -49213,7 +49298,7 @@ var __decorate26 = function(decorators, target, key, desc) {
         r = (c < 3 ? d(r) : c > 3 ? d(target, key, r) : d(target, key)) || r;
   return c > 3 && r && Object.defineProperty(target, key, r), r;
 };
-var PlayerLocomotionComponent = class extends Component71 {
+var PlayerLocomotionComponent = class extends Component72 {
   _myDefaultLocomotionType;
   _myAlwaysSmoothForNonVR;
   /** Double press main hand thumbstick (default: left) to switch */
@@ -49593,268 +49678,268 @@ var PlayerLocomotionComponent = class extends Component71 {
   }
 };
 __publicField(PlayerLocomotionComponent, "TypeName", "pp-player-locomotion");
-__decorate26([
-  property26.enum(["Smooth", "Teleport"], "Smooth")
+__decorate28([
+  property28.enum(["Smooth", "Teleport"], "Smooth")
 ], PlayerLocomotionComponent.prototype, "_myDefaultLocomotionType", void 0);
-__decorate26([
-  property26.bool(true)
+__decorate28([
+  property28.bool(true)
 ], PlayerLocomotionComponent.prototype, "_myAlwaysSmoothForNonVR", void 0);
-__decorate26([
-  property26.bool(true)
+__decorate28([
+  property28.bool(true)
 ], PlayerLocomotionComponent.prototype, "_mySwitchLocomotionTypeShortcutEnabled", void 0);
-__decorate26([
-  property26.bool(false)
+__decorate28([
+  property28.bool(false)
 ], PlayerLocomotionComponent.prototype, "_myStartIdle", void 0);
-__decorate26([
-  property26.string("0, 0, 0, 0, 0, 0, 0, 0")
+__decorate28([
+  property28.string("0, 0, 0, 0, 0, 0, 0, 0")
 ], PlayerLocomotionComponent.prototype, "_myPhysicsBlockLayerFlags", void 0);
-__decorate26([
-  property26.float(1.7)
+__decorate28([
+  property28.float(1.7)
 ], PlayerLocomotionComponent.prototype, "_myDefaultHeight", void 0);
-__decorate26([
-  property26.float(0.5)
+__decorate28([
+  property28.float(0.5)
 ], PlayerLocomotionComponent.prototype, "_myMinHeight", void 0);
-__decorate26([
-  property26.float(0.3)
+__decorate28([
+  property28.float(0.3)
 ], PlayerLocomotionComponent.prototype, "_myCharacterRadius", void 0);
-__decorate26([
-  property26.float(-1)
+__decorate28([
+  property28.float(-1)
 ], PlayerLocomotionComponent.prototype, "_myCharacterFeetRadius", void 0);
-__decorate26([
-  property26.float(0.1)
+__decorate28([
+  property28.float(0.1)
 ], PlayerLocomotionComponent.prototype, "_myForeheadExtraHeight", void 0);
-__decorate26([
-  property26.float(2)
+__decorate28([
+  property28.float(2)
 ], PlayerLocomotionComponent.prototype, "_myMaxSpeed", void 0);
-__decorate26([
-  property26.float(100)
+__decorate28([
+  property28.float(100)
 ], PlayerLocomotionComponent.prototype, "_myMaxRotationSpeed", void 0);
-__decorate26([
-  property26.float(1)
+__decorate28([
+  property28.float(1)
 ], PlayerLocomotionComponent.prototype, "_mySpeedSlowDownPercentageOnWallSlid", void 0);
-__decorate26([
-  property26.float(-20)
+__decorate28([
+  property28.float(-20)
 ], PlayerLocomotionComponent.prototype, "_myGravityAcceleration", void 0);
-__decorate26([
-  property26.float(-15)
+__decorate28([
+  property28.float(-15)
 ], PlayerLocomotionComponent.prototype, "_myMaxGravitySpeed", void 0);
-__decorate26([
-  property26.bool(true)
+__decorate28([
+  property28.bool(true)
 ], PlayerLocomotionComponent.prototype, "_myIsSnapTurn", void 0);
-__decorate26([
-  property26.bool(true)
+__decorate28([
+  property28.bool(true)
 ], PlayerLocomotionComponent.prototype, "_mySnapTurnOnlyVR", void 0);
-__decorate26([
-  property26.float(30)
+__decorate28([
+  property28.float(30)
 ], PlayerLocomotionComponent.prototype, "_mySnapTurnAngle", void 0);
-__decorate26([
-  property26.float(0)
+__decorate28([
+  property28.float(0)
 ], PlayerLocomotionComponent.prototype, "_mySnapTurnSpeedDegrees", void 0);
-__decorate26([
-  property26.bool(false)
+__decorate28([
+  property28.bool(false)
 ], PlayerLocomotionComponent.prototype, "_myFlyEnabled", void 0);
-__decorate26([
-  property26.bool(false)
+__decorate28([
+  property28.bool(false)
 ], PlayerLocomotionComponent.prototype, "_myStartFlying", void 0);
-__decorate26([
-  property26.bool(false)
+__decorate28([
+  property28.bool(false)
 ], PlayerLocomotionComponent.prototype, "_myFlyWithButtonsEnabled", void 0);
-__decorate26([
-  property26.bool(false)
+__decorate28([
+  property28.bool(false)
 ], PlayerLocomotionComponent.prototype, "_myFlyWithViewAngleEnabled", void 0);
-__decorate26([
-  property26.float(30)
+__decorate28([
+  property28.float(30)
 ], PlayerLocomotionComponent.prototype, "_myMinAngleToFlyUpNonVR", void 0);
-__decorate26([
-  property26.float(40)
+__decorate28([
+  property28.float(40)
 ], PlayerLocomotionComponent.prototype, "_myMinAngleToFlyDownNonVR", void 0);
-__decorate26([
-  property26.float(30)
+__decorate28([
+  property28.float(30)
 ], PlayerLocomotionComponent.prototype, "_myMinAngleToFlyUpVR", void 0);
-__decorate26([
-  property26.float(40)
+__decorate28([
+  property28.float(40)
 ], PlayerLocomotionComponent.prototype, "_myMinAngleToFlyDownVR", void 0);
-__decorate26([
-  property26.float(90)
+__decorate28([
+  property28.float(90)
 ], PlayerLocomotionComponent.prototype, "_myMinAngleToFlyRight", void 0);
-__decorate26([
-  property26.enum(["Left", "Right"], "Left")
+__decorate28([
+  property28.enum(["Left", "Right"], "Left")
 ], PlayerLocomotionComponent.prototype, "_myMainHand", void 0);
-__decorate26([
-  property26.bool(true)
+__decorate28([
+  property28.bool(true)
 ], PlayerLocomotionComponent.prototype, "_myDirectionInvertForwardWhenUpsideDown", void 0);
-__decorate26([
-  property26.enum(["Head", "Hand", "Custom Object"], "Head")
+__decorate28([
+  property28.enum(["Head", "Hand", "Custom Object"], "Head")
 ], PlayerLocomotionComponent.prototype, "_myVRDirectionReferenceType", void 0);
-__decorate26([
-  property26.object()
+__decorate28([
+  property28.object()
 ], PlayerLocomotionComponent.prototype, "_myVRDirectionReferenceObject", void 0);
-__decorate26([
-  property26.enum(["Instant", "Blink", "Shift"], "Shift")
+__decorate28([
+  property28.enum(["Instant", "Blink", "Shift"], "Shift")
 ], PlayerLocomotionComponent.prototype, "_myTeleportType", void 0);
-__decorate26([
-  property26.float(3)
+__decorate28([
+  property28.float(3)
 ], PlayerLocomotionComponent.prototype, "_myTeleportMaxDistance", void 0);
-__decorate26([
-  property26.float(1.25)
+__decorate28([
+  property28.float(1.25)
 ], PlayerLocomotionComponent.prototype, "_myTeleportMaxHeightDifference", void 0);
-__decorate26([
-  property26.string("")
+__decorate28([
+  property28.string("")
 ], PlayerLocomotionComponent.prototype, "_myTeleportFloorLayerFlags", void 0);
-__decorate26([
-  property26.bool(false)
+__decorate28([
+  property28.bool(false)
 ], PlayerLocomotionComponent.prototype, "_myTeleportRotationOnUpEnabled", void 0);
-__decorate26([
-  property26.material()
+__decorate28([
+  property28.material()
 ], PlayerLocomotionComponent.prototype, "_myTeleportValidMaterial", void 0);
-__decorate26([
-  property26.material()
+__decorate28([
+  property28.material()
 ], PlayerLocomotionComponent.prototype, "_myTeleportInvalidMaterial", void 0);
-__decorate26([
-  property26.object()
+__decorate28([
+  property28.object()
 ], PlayerLocomotionComponent.prototype, "_myTeleportPositionObject", void 0);
-__decorate26([
-  property26.bool(true)
+__decorate28([
+  property28.bool(true)
 ], PlayerLocomotionComponent.prototype, "_myTeleportPositionObjectRotateWithHead", void 0);
-__decorate26([
-  property26.object()
+__decorate28([
+  property28.object()
 ], PlayerLocomotionComponent.prototype, "_myTeleportParableStartReferenceObject", void 0);
-__decorate26([
-  property26.bool(true)
+__decorate28([
+  property28.bool(true)
 ], PlayerLocomotionComponent.prototype, "_myResetRealOnStart", void 0);
-__decorate26([
-  property26.int(1)
+__decorate28([
+  property28.int(1)
 ], PlayerLocomotionComponent.prototype, "_myResetRealOnStartFramesAmount", void 0);
-__decorate26([
-  property26.bool(true)
+__decorate28([
+  property28.bool(true)
 ], PlayerLocomotionComponent.prototype, "_myResetHeadToFeetInsteadOfReal", void 0);
-__decorate26([
-  property26.float(0.25)
+__decorate28([
+  property28.float(0.25)
 ], PlayerLocomotionComponent.prototype, "_myResetHeadToRealMinDistance", void 0);
-__decorate26([
-  property26.int(-1)
+__decorate28([
+  property28.int(-1)
 ], PlayerLocomotionComponent.prototype, "_myMaxHeadToRealHeadSteps", void 0);
-__decorate26([
-  property26.bool(true)
+__decorate28([
+  property28.bool(true)
 ], PlayerLocomotionComponent.prototype, "_mySyncWithRealWorldPositionOnlyIfValid", void 0);
-__decorate26([
-  property26.bool(true)
+__decorate28([
+  property28.bool(true)
 ], PlayerLocomotionComponent.prototype, "_mySyncWithRealHeightOnlyIfValid", void 0);
-__decorate26([
-  property26.bool(false)
+__decorate28([
+  property28.bool(false)
 ], PlayerLocomotionComponent.prototype, "_mySnapRealPositionToGround", void 0);
-__decorate26([
-  property26.bool(false)
+__decorate28([
+  property28.bool(false)
 ], PlayerLocomotionComponent.prototype, "_myPreventRealFromColliding", void 0);
-__decorate26([
-  property26.bool(true)
+__decorate28([
+  property28.bool(true)
 ], PlayerLocomotionComponent.prototype, "_myUseHighestColliderHeightWhenManuallyMovingHorizontally", void 0);
-__decorate26([
-  property26.bool(true)
+__decorate28([
+  property28.bool(true)
 ], PlayerLocomotionComponent.prototype, "_myViewOcclusionInsideWallsEnabled", void 0);
-__decorate26([
-  property26.string("")
+__decorate28([
+  property28.string("")
 ], PlayerLocomotionComponent.prototype, "_myViewOcclusionLayerFlags", void 0);
-__decorate26([
-  property26.float(0.145)
+__decorate28([
+  property28.float(0.145)
 ], PlayerLocomotionComponent.prototype, "_myViewOcclusionHeadRadius", void 0);
-__decorate26([
-  property26.float(0.15)
+__decorate28([
+  property28.float(0.15)
 ], PlayerLocomotionComponent.prototype, "_myViewOcclusionHeadHeight", void 0);
-__decorate26([
-  property26.float(0.1)
+__decorate28([
+  property28.float(0.1)
 ], PlayerLocomotionComponent.prototype, "_myViewOcclusionFadeOutSeconds", void 0);
-__decorate26([
-  property26.float(0.025)
+__decorate28([
+  property28.float(0.025)
 ], PlayerLocomotionComponent.prototype, "_myViewOcclusionMaxRealHeadDistance", void 0);
-__decorate26([
-  property26.bool(false)
+__decorate28([
+  property28.bool(false)
 ], PlayerLocomotionComponent.prototype, "_mySyncNonVRHeightWithVROnExitSession", void 0);
-__decorate26([
-  property26.bool(false)
+__decorate28([
+  property28.bool(false)
 ], PlayerLocomotionComponent.prototype, "_mySyncNonVRVerticalAngleWithVROnExitSession", void 0);
-__decorate26([
-  property26.bool(true)
+__decorate28([
+  property28.bool(true)
 ], PlayerLocomotionComponent.prototype, "_mySyncHeadWithRealAfterLocomotionUpdateIfNeeded", void 0);
-__decorate26([
-  property26.enum(["Very Low", "Low", "Medium", "High", "Very High"], "High")
+__decorate28([
+  property28.enum(["Very Low", "Low", "Medium", "High", "Very High"], "High")
 ], PlayerLocomotionComponent.prototype, "_myColliderAccuracy", void 0);
-__decorate26([
-  property26.bool(false)
+__decorate28([
+  property28.bool(false)
 ], PlayerLocomotionComponent.prototype, "_myColliderCheckOnlyFeet", void 0);
-__decorate26([
-  property26.bool(true)
+__decorate28([
+  property28.bool(true)
 ], PlayerLocomotionComponent.prototype, "_myColliderCheckCeilings", void 0);
-__decorate26([
-  property26.bool(true)
+__decorate28([
+  property28.bool(true)
 ], PlayerLocomotionComponent.prototype, "_myColliderSlideAlongWall", void 0);
-__decorate26([
-  property26.float(30)
+__decorate28([
+  property28.float(30)
 ], PlayerLocomotionComponent.prototype, "_myColliderMaxWalkableGroundAngle", void 0);
-__decorate26([
-  property26.float(-1)
+__decorate28([
+  property28.float(-1)
 ], PlayerLocomotionComponent.prototype, "_myColliderMaxTeleportableGroundAngle", void 0);
-__decorate26([
-  property26.bool(true)
+__decorate28([
+  property28.bool(true)
 ], PlayerLocomotionComponent.prototype, "_myColliderSnapOnGround", void 0);
-__decorate26([
-  property26.float(0.1)
+__decorate28([
+  property28.float(0.1)
 ], PlayerLocomotionComponent.prototype, "_myColliderMaxDistanceToSnapOnGround", void 0);
-__decorate26([
-  property26.float(0.2)
+__decorate28([
+  property28.float(0.2)
 ], PlayerLocomotionComponent.prototype, "_myColliderMaxDistanceToPopOutGround", void 0);
-__decorate26([
-  property26.float(0.1)
+__decorate28([
+  property28.float(0.1)
 ], PlayerLocomotionComponent.prototype, "_myColliderMaxWalkableGroundStepHeight", void 0);
-__decorate26([
-  property26.float(0)
+__decorate28([
+  property28.float(0)
 ], PlayerLocomotionComponent.prototype, "_myColliderMaxWalkableCeilingStepHeight", void 0);
-__decorate26([
-  property26.bool(false)
+__decorate28([
+  property28.bool(false)
 ], PlayerLocomotionComponent.prototype, "_myColliderPreventFallingFromEdges", void 0);
-__decorate26([
-  property26.int(3)
+__decorate28([
+  property28.int(3)
 ], PlayerLocomotionComponent.prototype, "_myColliderMaxMovementSteps", void 0);
-__decorate26([
-  property26.float(0)
+__decorate28([
+  property28.float(0)
 ], PlayerLocomotionComponent.prototype, "_myColliderExtraHeight", void 0);
-__decorate26([
-  property26.bool(false)
+__decorate28([
+  property28.bool(false)
 ], PlayerLocomotionComponent.prototype, "_myDebugFlyShortcutEnabled", void 0);
-__decorate26([
-  property26.float(5)
+__decorate28([
+  property28.float(5)
 ], PlayerLocomotionComponent.prototype, "_myDebugFlyMaxSpeedMultiplier", void 0);
-__decorate26([
-  property26.bool(false)
+__decorate28([
+  property28.bool(false)
 ], PlayerLocomotionComponent.prototype, "_myMoveThroughCollisionShortcutEnabled", void 0);
-__decorate26([
-  property26.bool(false)
+__decorate28([
+  property28.bool(false)
 ], PlayerLocomotionComponent.prototype, "_myMoveHeadShortcutEnabled", void 0);
-__decorate26([
-  property26.bool(false)
+__decorate28([
+  property28.bool(false)
 ], PlayerLocomotionComponent.prototype, "_myTripleSpeedShortcutEnabled", void 0);
-__decorate26([
-  property26.bool(false)
+__decorate28([
+  property28.bool(false)
 ], PlayerLocomotionComponent.prototype, "_myDebugHorizontalEnabled", void 0);
-__decorate26([
-  property26.bool(false)
+__decorate28([
+  property28.bool(false)
 ], PlayerLocomotionComponent.prototype, "_myDebugVerticalEnabled", void 0);
-__decorate26([
-  property26.bool(false)
+__decorate28([
+  property28.bool(false)
 ], PlayerLocomotionComponent.prototype, "_myCollisionCheckDisabled", void 0);
-__decorate26([
-  property26.bool(false)
+__decorate28([
+  property28.bool(false)
 ], PlayerLocomotionComponent.prototype, "_myRaycastCountLogEnabled", void 0);
-__decorate26([
-  property26.bool(false)
+__decorate28([
+  property28.bool(false)
 ], PlayerLocomotionComponent.prototype, "_myRaycastVisualDebugEnabled", void 0);
-__decorate26([
-  property26.bool(false)
+__decorate28([
+  property28.bool(false)
 ], PlayerLocomotionComponent.prototype, "_myPerformanceLogEnabled", void 0);
 
 // node_modules/wle-pp/dist/pp/input/cauldron/components/overlap_cursor_component.js
-import { CollisionComponent as CollisionComponent5, Component as Component72, PhysXComponent as PhysXComponent11, property as property27 } from "@wonderlandengine/api";
-var __decorate27 = function(decorators, target, key, desc) {
+import { CollisionComponent as CollisionComponent5, Component as Component73, PhysXComponent as PhysXComponent11, property as property29 } from "@wonderlandengine/api";
+var __decorate29 = function(decorators, target, key, desc) {
   var c = arguments.length, r = c < 3 ? target : desc === null ? desc = Object.getOwnPropertyDescriptor(target, key) : desc, d;
   if (typeof Reflect === "object" && typeof Reflect.decorate === "function")
     r = Reflect.decorate(decorators, target, key, desc);
@@ -49864,7 +49949,7 @@ var __decorate27 = function(decorators, target, key, desc) {
         r = (c < 3 ? d(r) : c > 3 ? d(target, key, r) : d(target, key)) || r;
   return c > 3 && r && Object.defineProperty(target, key, r), r;
 };
-var _OverlapCursorComponent = class extends Component72 {
+var _OverlapCursorComponent = class extends Component73 {
   /**
    * This is useful if you want to avoid the cursor entering and exiting the target when very close to the target,
    * due to it flickering between inside and outside.
@@ -50071,16 +50156,16 @@ __publicField(OverlapCursorComponent, "_isOverlapAngleValidSV", {
   targetForward: vec3_create(),
   directionToCursor: vec3_create()
 });
-__decorate27([
-  property27.float(1.125)
+__decorate29([
+  property29.float(1.125)
 ], OverlapCursorComponent.prototype, "_myCollisionSizeMultiplierOnOverlap", void 0);
-__decorate27([
-  property27.float(90)
+__decorate29([
+  property29.float(90)
 ], OverlapCursorComponent.prototype, "_myValidOverlapAngleFromTargetForward", void 0);
 
 // node_modules/wle-pp/dist/pp/input/cauldron/components/finger_cursor_component.js
-import { Collider as Collider2, CollisionComponent as CollisionComponent6, Component as Component73, PhysXComponent as PhysXComponent12, property as property28, Shape as Shape2 } from "@wonderlandengine/api";
-var __decorate28 = function(decorators, target, key, desc) {
+import { Collider as Collider2, CollisionComponent as CollisionComponent6, Component as Component74, PhysXComponent as PhysXComponent12, property as property30, Shape as Shape2 } from "@wonderlandengine/api";
+var __decorate30 = function(decorators, target, key, desc) {
   var c = arguments.length, r = c < 3 ? target : desc === null ? desc = Object.getOwnPropertyDescriptor(target, key) : desc, d;
   if (typeof Reflect === "object" && typeof Reflect.decorate === "function")
     r = Reflect.decorate(decorators, target, key, desc);
@@ -50090,7 +50175,7 @@ var __decorate28 = function(decorators, target, key, desc) {
         r = (c < 3 ? d(r) : c > 3 ? d(target, key, r) : d(target, key)) || r;
   return c > 3 && r && Object.defineProperty(target, key, r), r;
 };
-var _FingerCursorComponent = class extends Component73 {
+var _FingerCursorComponent = class extends Component74 {
   _myHandedness;
   _myFinger;
   _myCollisionMode;
@@ -50230,40 +50315,40 @@ __publicField(FingerCursorComponent, "TypeName", "pp-finger-cursor");
 __publicField(FingerCursorComponent, "_updateSV", {
   transformQuat: quat2_create()
 });
-__decorate28([
-  property28.enum(["Left", "Right"], "Left")
+__decorate30([
+  property30.enum(["Left", "Right"], "Left")
 ], FingerCursorComponent.prototype, "_myHandedness", void 0);
-__decorate28([
-  property28.enum(["Thumb", "Index", "Middle", "Ring", "Pinky"], "Index")
+__decorate30([
+  property30.enum(["Thumb", "Index", "Middle", "Ring", "Pinky"], "Index")
 ], FingerCursorComponent.prototype, "_myFinger", void 0);
-__decorate28([
-  property28.enum(["PhysX", "Collision"], "PhysX")
+__decorate30([
+  property30.enum(["PhysX", "Collision"], "PhysX")
 ], FingerCursorComponent.prototype, "_myCollisionMode", void 0);
-__decorate28([
-  property28.string("0, 0, 0, 0, 0, 0, 0, 0")
+__decorate30([
+  property30.string("0, 0, 0, 0, 0, 0, 0, 0")
 ], FingerCursorComponent.prototype, "_myCollisionFlags", void 0);
-__decorate28([
-  property28.float(0.0125)
+__decorate30([
+  property30.float(0.0125)
 ], FingerCursorComponent.prototype, "_myCollisionSize", void 0);
-__decorate28([
-  property28.float(1.25)
+__decorate30([
+  property30.float(1.25)
 ], FingerCursorComponent.prototype, "_myCollisionSizeMultiplierOnOverlap", void 0);
-__decorate28([
-  property28.float(90)
+__decorate30([
+  property30.float(90)
 ], FingerCursorComponent.prototype, "_myValidOverlapAngleFromTargetForward", void 0);
-__decorate28([
-  property28.object()
+__decorate30([
+  property30.object()
 ], FingerCursorComponent.prototype, "_myCursorPointerObject", void 0);
-__decorate28([
-  property28.bool(true)
+__decorate30([
+  property30.bool(true)
 ], FingerCursorComponent.prototype, "_myDisableDefaultCursorOnTrackedHandDetected", void 0);
-__decorate28([
-  property28.object()
+__decorate30([
+  property30.object()
 ], FingerCursorComponent.prototype, "_myDefaultCursorObject", void 0);
 
 // node_modules/wle-pp/dist/pp/input/cauldron/components/switch_hand_object_component.js
-import { Component as Component74, Property as Property32 } from "@wonderlandengine/api";
-var SwitchHandObjectComponent = class extends Component74 {
+import { Component as Component75, Property as Property31 } from "@wonderlandengine/api";
+var SwitchHandObjectComponent = class extends Component75 {
   start() {
     this._myHandednessType = InputUtils.getHandednessByIndex(this._myHandedness);
     this._myFirstUpdate = true;
@@ -50338,15 +50423,15 @@ var SwitchHandObjectComponent = class extends Component74 {
 };
 __publicField(SwitchHandObjectComponent, "TypeName", "pp-switch-hand-object");
 __publicField(SwitchHandObjectComponent, "Properties", {
-  _myHandedness: Property32.enum(["Left", "Right"], "Left"),
-  _myGamepad: Property32.object(),
-  _myTrackedHand: Property32.object(),
-  _myDisableHandsWhenNonXR: Property32.bool(true)
+  _myHandedness: Property31.enum(["Left", "Right"], "Left"),
+  _myGamepad: Property31.object(),
+  _myTrackedHand: Property31.object(),
+  _myDisableHandsWhenNonXR: Property31.bool(true)
 });
 
 // node_modules/wle-pp/dist/pp/input/cauldron/components/tracked_hand_draw_joint_component.js
-import { Component as Component75, MeshComponent as MeshComponent14, Property as Property33 } from "@wonderlandengine/api";
-var TrackedHandDrawJointComponent = class extends Component75 {
+import { Component as Component76, MeshComponent as MeshComponent14, Property as Property32 } from "@wonderlandengine/api";
+var TrackedHandDrawJointComponent = class extends Component76 {
   start() {
     this._myHandednessType = InputUtils.getHandednessByIndex(this._myHandedness);
     this._myJointIDType = InputUtils.getJointIDByIndex(this._myJointID);
@@ -50364,8 +50449,8 @@ var TrackedHandDrawJointComponent = class extends Component75 {
 };
 __publicField(TrackedHandDrawJointComponent, "TypeName", "pp-tracked-hand-draw-joint");
 __publicField(TrackedHandDrawJointComponent, "Properties", {
-  _myHandedness: Property33.enum(["Left", "Right"], "Left"),
-  _myJointID: Property33.enum([
+  _myHandedness: Property32.enum(["Left", "Right"], "Left"),
+  _myJointID: Property32.enum([
     "Wrist",
     "Thumb Metacarpal",
     "Thumb Phalanx Proximal",
@@ -50392,8 +50477,8 @@ __publicField(TrackedHandDrawJointComponent, "Properties", {
     "Pinky Phalanx Distal",
     "Pinky Tip"
   ], "Wrist"),
-  _myJointMesh: Property33.mesh(),
-  _myJointMaterial: Property33.material()
+  _myJointMesh: Property32.mesh(),
+  _myJointMaterial: Property32.material()
 });
 TrackedHandDrawJointComponent.prototype.update = function() {
   let transformQuat4 = quat2_create();
@@ -50405,8 +50490,8 @@ TrackedHandDrawJointComponent.prototype.update = function() {
 }();
 
 // node_modules/wle-pp/dist/pp/input/cauldron/components/tracked_hand_draw_all_joints_component.js
-import { Component as Component76, Property as Property34 } from "@wonderlandengine/api";
-var TrackedHandDrawAllJointsComponent = class extends Component76 {
+import { Component as Component77, Property as Property33 } from "@wonderlandengine/api";
+var TrackedHandDrawAllJointsComponent = class extends Component77 {
   start() {
     this._buildTrackedHandHierarchy();
   }
@@ -50430,15 +50515,15 @@ var TrackedHandDrawAllJointsComponent = class extends Component76 {
 };
 __publicField(TrackedHandDrawAllJointsComponent, "TypeName", "pp-tracked-hand-draw-all-joints");
 __publicField(TrackedHandDrawAllJointsComponent, "Properties", {
-  _myHandedness: Property34.enum(["Left", "Right"], "Left"),
-  _myHideMetacarpals: Property34.bool(true),
-  _myJointMesh: Property34.mesh(),
-  _myJointMaterial: Property34.material()
+  _myHandedness: Property33.enum(["Left", "Right"], "Left"),
+  _myHideMetacarpals: Property33.bool(true),
+  _myJointMesh: Property33.mesh(),
+  _myJointMaterial: Property33.material()
 });
 
 // node_modules/wle-pp/dist/pp/input/cauldron/components/tracked_hand_draw_skin_component.js
-import { Component as Component77, Property as Property35 } from "@wonderlandengine/api";
-var TrackedHandDrawSkinComponent = class extends Component77 {
+import { Component as Component78, Property as Property34 } from "@wonderlandengine/api";
+var TrackedHandDrawSkinComponent = class extends Component78 {
   start() {
     this._myHandednessType = InputUtils.getHandednessByIndex(this._myHandedness);
     this._prepareJoints();
@@ -50455,9 +50540,9 @@ var TrackedHandDrawSkinComponent = class extends Component77 {
 };
 __publicField(TrackedHandDrawSkinComponent, "TypeName", "pp-tracked-hand-draw-skin");
 __publicField(TrackedHandDrawSkinComponent, "Properties", {
-  _myHandedness: Property35.enum(["Left", "Right"], "Left"),
-  _myHandSkin: Property35.skin(null),
-  _myIsHandSkinForwardFixed: Property35.bool(false)
+  _myHandedness: Property34.enum(["Left", "Right"], "Left"),
+  _myHandSkin: Property34.skin(null),
+  _myIsHandSkinForwardFixed: Property34.bool(false)
   // Should become true when I can manage to create a tracked hand skin with the forward fixed
 });
 TrackedHandDrawSkinComponent.prototype.update = function() {
@@ -50477,8 +50562,8 @@ TrackedHandDrawSkinComponent.prototype.update = function() {
 }();
 
 // node_modules/wle-pp/dist/pp/input/gamepad/cauldron/gamepad_mesh_animator_component.js
-import { Component as Component78, Property as Property36 } from "@wonderlandengine/api";
-var GamepadMeshAnimatorComponent = class extends Component78 {
+import { Component as Component79, Property as Property35 } from "@wonderlandengine/api";
+var GamepadMeshAnimatorComponent = class extends Component79 {
   start() {
     if (this._mySelect != null) {
       this._mySelectOriginalRotation = this._mySelect.pp_getRotationLocalQuat();
@@ -50664,20 +50749,20 @@ var GamepadMeshAnimatorComponent = class extends Component78 {
 };
 __publicField(GamepadMeshAnimatorComponent, "TypeName", "pp-gamepad-mesh-animator");
 __publicField(GamepadMeshAnimatorComponent, "Properties", {
-  _myHandedness: Property36.enum(["Left", "Right"], "Left"),
-  _mySelect: Property36.object(null),
-  _mySqueeze: Property36.object(null),
-  _myThumbstick: Property36.object(null),
-  _myTopButton: Property36.object(null),
-  _myBottomButton: Property36.object(null),
-  _mySelectRotateAngle: Property36.float(15),
-  _mySqueezeRotateAngle: Property36.float(11),
-  _myThumbstickRotateAngle: Property36.float(15),
-  _myThumbstickPressOffset: Property36.float(625e-6),
-  _myTopButtonPressOffset: Property36.float(15e-4),
-  _myBottomButtonPressOffset: Property36.float(15e-4),
-  _myUsePressForSqueeze: Property36.bool(false),
-  _mySqueezePressOffset: Property36.float(15e-4)
+  _myHandedness: Property35.enum(["Left", "Right"], "Left"),
+  _mySelect: Property35.object(null),
+  _mySqueeze: Property35.object(null),
+  _myThumbstick: Property35.object(null),
+  _myTopButton: Property35.object(null),
+  _myBottomButton: Property35.object(null),
+  _mySelectRotateAngle: Property35.float(15),
+  _mySqueezeRotateAngle: Property35.float(11),
+  _myThumbstickRotateAngle: Property35.float(15),
+  _myThumbstickPressOffset: Property35.float(625e-6),
+  _myTopButtonPressOffset: Property35.float(15e-4),
+  _myBottomButtonPressOffset: Property35.float(15e-4),
+  _myUsePressForSqueeze: Property35.bool(false),
+  _mySqueezePressOffset: Property35.float(15e-4)
 });
 GamepadMeshAnimatorComponent.prototype._thumbstickPressedStart = function() {
   let upTranslation = vec3_create();
@@ -50692,8 +50777,8 @@ GamepadMeshAnimatorComponent.prototype._thumbstickPressedStart = function() {
 }();
 
 // node_modules/wle-pp/dist/pp/input/gamepad/cauldron/gamepad_control_scheme_component.js
-import { Alignment as Alignment5, Component as Component79, MeshComponent as MeshComponent15, Property as Property37, TextComponent as TextComponent10, VerticalAlignment as VerticalAlignment5 } from "@wonderlandengine/api";
-var GamepadControlSchemeComponent = class extends Component79 {
+import { Alignment as Alignment5, Component as Component80, MeshComponent as MeshComponent15, Property as Property36, TextComponent as TextComponent10, VerticalAlignment as VerticalAlignment5 } from "@wonderlandengine/api";
+var GamepadControlSchemeComponent = class extends Component80 {
   start() {
     this._myTextMaterialFinal = this._myTextMaterial != null ? this._myTextMaterial : Globals.getDefaultMaterials(this.engine).myText.clone();
     this._myLineMaterialFinal = this._myLineMaterial != null ? this._myLineMaterial : Globals.getDefaultMaterials(this.engine).myFlatOpaque.clone();
@@ -50854,25 +50939,25 @@ var GamepadControlSchemeComponent = class extends Component79 {
 };
 __publicField(GamepadControlSchemeComponent, "TypeName", "pp-gamepad-control-scheme");
 __publicField(GamepadControlSchemeComponent, "Properties", {
-  _myShowOnStart: Property37.bool(true),
-  _myHandedness: Property37.enum(["Left", "Right"], "Left"),
-  _mySelectText: Property37.string(""),
-  _mySqueezeText: Property37.string(""),
-  _myThumbstickText: Property37.string(""),
-  _myBottomButtonText: Property37.string(""),
-  _myTopButtonText: Property37.string(""),
-  _mySelect: Property37.object(null),
-  _mySqueeze: Property37.object(null),
-  _myThumbstick: Property37.object(null),
-  _myBottomButton: Property37.object(null),
-  _myTopButton: Property37.object(null),
-  _myTextScaleMultiplier: Property37.float(1),
-  _myTextOffsetMultiplier: Property37.float(1),
-  _myLineLengthMultiplier: Property37.float(1),
-  _myLineThicknessMultiplier: Property37.float(1),
-  _myDistanceFromButtonsMultiplier: Property37.float(1),
-  _myTextMaterial: Property37.material(),
-  _myLineMaterial: Property37.material()
+  _myShowOnStart: Property36.bool(true),
+  _myHandedness: Property36.enum(["Left", "Right"], "Left"),
+  _mySelectText: Property36.string(""),
+  _mySqueezeText: Property36.string(""),
+  _myThumbstickText: Property36.string(""),
+  _myBottomButtonText: Property36.string(""),
+  _myTopButtonText: Property36.string(""),
+  _mySelect: Property36.object(null),
+  _mySqueeze: Property36.object(null),
+  _myThumbstick: Property36.object(null),
+  _myBottomButton: Property36.object(null),
+  _myTopButton: Property36.object(null),
+  _myTextScaleMultiplier: Property36.float(1),
+  _myTextOffsetMultiplier: Property36.float(1),
+  _myLineLengthMultiplier: Property36.float(1),
+  _myLineThicknessMultiplier: Property36.float(1),
+  _myDistanceFromButtonsMultiplier: Property36.float(1),
+  _myTextMaterial: Property36.material(),
+  _myLineMaterial: Property36.material()
 });
 
 // node_modules/wle-pp/dist/pp/input/gamepad/virtual_gamepad/virtual_gamepad_icon.js
@@ -51961,8 +52046,8 @@ var VirtualGamepadGamepadCore = class extends GamepadCore {
 };
 
 // node_modules/wle-pp/dist/pp/input/gamepad/virtual_gamepad/virtual_gamepad_component.js
-import { Component as Component80, Property as Property38 } from "@wonderlandengine/api";
-var VirtualGamepadComponent = class extends Component80 {
+import { Component as Component81, Property as Property37 } from "@wonderlandengine/api";
+var VirtualGamepadComponent = class extends Component81 {
   start() {
     let params = new VirtualGamepadParams(this.engine);
     params.defaultConfig();
@@ -52290,81 +52375,81 @@ var VirtualGamepadComponent = class extends Component80 {
 };
 __publicField(VirtualGamepadComponent, "TypeName", "pp-virtual-gamepad");
 __publicField(VirtualGamepadComponent, "Properties", {
-  _myShowOnDesktop: Property38.bool(false),
+  _myShowOnDesktop: Property37.bool(false),
   // You may have to enable headset too
-  _myShowOnMobile: Property38.bool(true),
-  _myShowOnHeadset: Property38.bool(false),
+  _myShowOnMobile: Property37.bool(true),
+  _myShowOnHeadset: Property37.bool(false),
   // Not 100% reliable, this is true if the device supports XR and it is Desktop
-  _myAddToUniversalGamepad: Property38.bool(true),
-  _myOpacity: Property38.float(0.5),
-  _myIconColor: Property38.string("#e0e0e0"),
-  _myBackgroundColor: Property38.string("#616161"),
-  _myInterfaceScale: Property38.float(1),
-  _myMarginScale: Property38.float(1),
-  ADVANCED_PARAMS_BELOW: Property38.string(""),
-  _myLabelFontSize: Property38.float(2),
-  _myLabelFontFamily: Property38.string("sans-serif"),
-  _myLabelFontWeight: Property38.string("bold"),
-  _myImagePressedBrightness: Property38.float(0.5),
-  _myLeftFirstButtonEnabled: Property38.bool(true),
-  _myLeftFirstButtonGamepadButtonID: Property38.enum(["Select", "Squeeze", "Thumbstick", "Top Button", "Bottom Button", "Left Button", "Right Button", "Menu", "Touchpad", "Thumb Rest"], "Squeeze"),
-  _myLeftFirstButtonGamepadHandedness: Property38.enum(["Left", "Right"], "Left"),
-  _myLeftFirstButtonIconType: Property38.enum(["None", "Label", "Image", "Dot", "Circle", "Square", "Ring", "Frame"], "Square"),
-  _myLeftFirstButtonIconLabelOrImageUrl: Property38.string(""),
-  _myLeftSecondButtonEnabled: Property38.bool(true),
-  _myLeftSecondButtonGamepadButtonID: Property38.enum(["Select", "Squeeze", "Thumbstick", "Top Button", "Bottom Button", "Left Button", "Right Button", "Menu", "Touchpad", "Thumb Rest"], "Select"),
-  _myLeftSecondButtonGamepadHandedness: Property38.enum(["Left", "Right"], "Left"),
-  _myLeftSecondButtonIconType: Property38.enum(["None", "Label", "Image", "Dot", "Circle", "Square", "Ring", "Frame"], "Frame"),
-  _myLeftSecondButtonIconLabelOrImageUrl: Property38.string(""),
-  _myLeftThirdButtonEnabled: Property38.bool(true),
-  _myLeftThirdButtonGamepadButtonID: Property38.enum(["Select", "Squeeze", "Thumbstick", "Top Button", "Bottom Button", "Left Button", "Right Button", "Menu", "Touchpad", "Thumb Rest"], "Top Button"),
-  _myLeftThirdButtonGamepadHandedness: Property38.enum(["Left", "Right"], "Left"),
-  _myLeftThirdButtonIconType: Property38.enum(["None", "Label", "Image", "Dot", "Circle", "Square", "Ring", "Frame"], "Circle"),
-  _myLeftThirdButtonIconLabelOrImageUrl: Property38.string(""),
-  _myLeftFourthButtonEnabled: Property38.bool(true),
-  _myLeftFourthButtonGamepadButtonID: Property38.enum(["Select", "Squeeze", "Thumbstick", "Top Button", "Bottom Button", "Left Button", "Right Button", "Menu", "Touchpad", "Thumb Rest"], "Bottom Button"),
-  _myLeftFourthButtonGamepadHandedness: Property38.enum(["Left", "Right"], "Left"),
-  _myLeftFourthButtonIconType: Property38.enum(["None", "Label", "Image", "Dot", "Circle", "Square", "Ring", "Frame"], "Ring"),
-  _myLeftFourthButtonIconLabelOrImageUrl: Property38.string(""),
-  _myLeftFifthButtonEnabled: Property38.bool(true),
-  _myLeftFifthButtonGamepadButtonID: Property38.enum(["Select", "Squeeze", "Thumbstick", "Top Button", "Bottom Button", "Left Button", "Right Button", "Menu", "Touchpad", "Thumb Rest"], "Thumbstick"),
-  _myLeftFifthButtonGamepadHandedness: Property38.enum(["Left", "Right"], "Left"),
-  _myLeftFifthButtonIconType: Property38.enum(["None", "Label", "Image", "Dot", "Circle", "Square", "Ring", "Frame"], "Dot"),
-  _myLeftFifthButtonIconLabelOrImageUrl: Property38.string(""),
-  _myLeftThumbstickEnabled: Property38.bool(true),
-  _myLeftThumbstickGamepadHandedness: Property38.enum(["Left", "Right"], "Left"),
-  _myRightFirstButtonEnabled: Property38.bool(true),
-  _myRightFirstButtonGamepadButtonID: Property38.enum(["Select", "Squeeze", "Thumbstick", "Top Button", "Bottom Button", "Left Button", "Right Button", "Menu", "Touchpad", "Thumb Rest"], "Squeeze"),
-  _myRightFirstButtonGamepadHandedness: Property38.enum(["Left", "Right"], "Right"),
-  _myRightFirstButtonIconType: Property38.enum(["None", "Label", "Image", "Dot", "Circle", "Square", "Ring", "Frame"], "Square"),
-  _myRightFirstButtonIconLabelOrImageUrl: Property38.string(""),
-  _myRightSecondButtonEnabled: Property38.bool(true),
-  _myRightSecondButtonGamepadButtonID: Property38.enum(["Select", "Squeeze", "Thumbstick", "Top Button", "Bottom Button", "Left Button", "Right Button", "Menu", "Touchpad", "Thumb Rest"], "Select"),
-  _myRightSecondButtonGamepadHandedness: Property38.enum(["Left", "Right"], "Right"),
-  _myRightSecondButtonIconType: Property38.enum(["None", "Label", "Image", "Dot", "Circle", "Square", "Ring", "Frame"], "Frame"),
-  _myRightSecondButtonIconLabelOrImageUrl: Property38.string(""),
-  _myRightThirdButtonEnabled: Property38.bool(true),
-  _myRightThirdButtonGamepadButtonID: Property38.enum(["Select", "Squeeze", "Thumbstick", "Top Button", "Bottom Button", "Left Button", "Right Button", "Menu", "Touchpad", "Thumb Rest"], "Top Button"),
-  _myRightThirdButtonGamepadHandedness: Property38.enum(["Left", "Right"], "Right"),
-  _myRightThirdButtonIconType: Property38.enum(["None", "Label", "Image", "Dot", "Circle", "Square", "Ring", "Frame"], "Circle"),
-  _myRightThirdButtonIconLabelOrImageUrl: Property38.string(""),
-  _myRightFourthButtonEnabled: Property38.bool(true),
-  _myRightFourthButtonGamepadButtonID: Property38.enum(["Select", "Squeeze", "Thumbstick", "Top Button", "Bottom Button", "Left Button", "Right Button", "Menu", "Touchpad", "Thumb Rest"], "Bottom Button"),
-  _myRightFourthButtonGamepadHandedness: Property38.enum(["Left", "Right"], "Right"),
-  _myRightFourthButtonIconType: Property38.enum(["None", "Label", "Image", "Dot", "Circle", "Square", "Ring", "Frame"], "Ring"),
-  _myRightFourthButtonIconLabelOrImageUrl: Property38.string(""),
-  _myRightFifthButtonEnabled: Property38.bool(true),
-  _myRightFifthButtonGamepadButtonID: Property38.enum(["Select", "Squeeze", "Thumbstick", "Top Button", "Bottom Button", "Left Button", "Right Button", "Menu", "Touchpad", "Thumb Rest"], "Thumbstick"),
-  _myRightFifthButtonGamepadHandedness: Property38.enum(["Left", "Right"], "Right"),
-  _myRightFifthButtonIconType: Property38.enum(["None", "Label", "Image", "Dot", "Circle", "Square", "Ring", "Frame"], "Dot"),
-  _myRightFifthButtonIconLabelOrImageUrl: Property38.string(""),
-  _myRightThumbstickEnabled: Property38.bool(true),
-  _myRightThumbstickGamepadHandedness: Property38.enum(["Left", "Right"], "Right")
+  _myAddToUniversalGamepad: Property37.bool(true),
+  _myOpacity: Property37.float(0.5),
+  _myIconColor: Property37.string("#e0e0e0"),
+  _myBackgroundColor: Property37.string("#616161"),
+  _myInterfaceScale: Property37.float(1),
+  _myMarginScale: Property37.float(1),
+  ADVANCED_PARAMS_BELOW: Property37.string(""),
+  _myLabelFontSize: Property37.float(2),
+  _myLabelFontFamily: Property37.string("sans-serif"),
+  _myLabelFontWeight: Property37.string("bold"),
+  _myImagePressedBrightness: Property37.float(0.5),
+  _myLeftFirstButtonEnabled: Property37.bool(true),
+  _myLeftFirstButtonGamepadButtonID: Property37.enum(["Select", "Squeeze", "Thumbstick", "Top Button", "Bottom Button", "Left Button", "Right Button", "Menu", "Touchpad", "Thumb Rest"], "Squeeze"),
+  _myLeftFirstButtonGamepadHandedness: Property37.enum(["Left", "Right"], "Left"),
+  _myLeftFirstButtonIconType: Property37.enum(["None", "Label", "Image", "Dot", "Circle", "Square", "Ring", "Frame"], "Square"),
+  _myLeftFirstButtonIconLabelOrImageUrl: Property37.string(""),
+  _myLeftSecondButtonEnabled: Property37.bool(true),
+  _myLeftSecondButtonGamepadButtonID: Property37.enum(["Select", "Squeeze", "Thumbstick", "Top Button", "Bottom Button", "Left Button", "Right Button", "Menu", "Touchpad", "Thumb Rest"], "Select"),
+  _myLeftSecondButtonGamepadHandedness: Property37.enum(["Left", "Right"], "Left"),
+  _myLeftSecondButtonIconType: Property37.enum(["None", "Label", "Image", "Dot", "Circle", "Square", "Ring", "Frame"], "Frame"),
+  _myLeftSecondButtonIconLabelOrImageUrl: Property37.string(""),
+  _myLeftThirdButtonEnabled: Property37.bool(true),
+  _myLeftThirdButtonGamepadButtonID: Property37.enum(["Select", "Squeeze", "Thumbstick", "Top Button", "Bottom Button", "Left Button", "Right Button", "Menu", "Touchpad", "Thumb Rest"], "Top Button"),
+  _myLeftThirdButtonGamepadHandedness: Property37.enum(["Left", "Right"], "Left"),
+  _myLeftThirdButtonIconType: Property37.enum(["None", "Label", "Image", "Dot", "Circle", "Square", "Ring", "Frame"], "Circle"),
+  _myLeftThirdButtonIconLabelOrImageUrl: Property37.string(""),
+  _myLeftFourthButtonEnabled: Property37.bool(true),
+  _myLeftFourthButtonGamepadButtonID: Property37.enum(["Select", "Squeeze", "Thumbstick", "Top Button", "Bottom Button", "Left Button", "Right Button", "Menu", "Touchpad", "Thumb Rest"], "Bottom Button"),
+  _myLeftFourthButtonGamepadHandedness: Property37.enum(["Left", "Right"], "Left"),
+  _myLeftFourthButtonIconType: Property37.enum(["None", "Label", "Image", "Dot", "Circle", "Square", "Ring", "Frame"], "Ring"),
+  _myLeftFourthButtonIconLabelOrImageUrl: Property37.string(""),
+  _myLeftFifthButtonEnabled: Property37.bool(true),
+  _myLeftFifthButtonGamepadButtonID: Property37.enum(["Select", "Squeeze", "Thumbstick", "Top Button", "Bottom Button", "Left Button", "Right Button", "Menu", "Touchpad", "Thumb Rest"], "Thumbstick"),
+  _myLeftFifthButtonGamepadHandedness: Property37.enum(["Left", "Right"], "Left"),
+  _myLeftFifthButtonIconType: Property37.enum(["None", "Label", "Image", "Dot", "Circle", "Square", "Ring", "Frame"], "Dot"),
+  _myLeftFifthButtonIconLabelOrImageUrl: Property37.string(""),
+  _myLeftThumbstickEnabled: Property37.bool(true),
+  _myLeftThumbstickGamepadHandedness: Property37.enum(["Left", "Right"], "Left"),
+  _myRightFirstButtonEnabled: Property37.bool(true),
+  _myRightFirstButtonGamepadButtonID: Property37.enum(["Select", "Squeeze", "Thumbstick", "Top Button", "Bottom Button", "Left Button", "Right Button", "Menu", "Touchpad", "Thumb Rest"], "Squeeze"),
+  _myRightFirstButtonGamepadHandedness: Property37.enum(["Left", "Right"], "Right"),
+  _myRightFirstButtonIconType: Property37.enum(["None", "Label", "Image", "Dot", "Circle", "Square", "Ring", "Frame"], "Square"),
+  _myRightFirstButtonIconLabelOrImageUrl: Property37.string(""),
+  _myRightSecondButtonEnabled: Property37.bool(true),
+  _myRightSecondButtonGamepadButtonID: Property37.enum(["Select", "Squeeze", "Thumbstick", "Top Button", "Bottom Button", "Left Button", "Right Button", "Menu", "Touchpad", "Thumb Rest"], "Select"),
+  _myRightSecondButtonGamepadHandedness: Property37.enum(["Left", "Right"], "Right"),
+  _myRightSecondButtonIconType: Property37.enum(["None", "Label", "Image", "Dot", "Circle", "Square", "Ring", "Frame"], "Frame"),
+  _myRightSecondButtonIconLabelOrImageUrl: Property37.string(""),
+  _myRightThirdButtonEnabled: Property37.bool(true),
+  _myRightThirdButtonGamepadButtonID: Property37.enum(["Select", "Squeeze", "Thumbstick", "Top Button", "Bottom Button", "Left Button", "Right Button", "Menu", "Touchpad", "Thumb Rest"], "Top Button"),
+  _myRightThirdButtonGamepadHandedness: Property37.enum(["Left", "Right"], "Right"),
+  _myRightThirdButtonIconType: Property37.enum(["None", "Label", "Image", "Dot", "Circle", "Square", "Ring", "Frame"], "Circle"),
+  _myRightThirdButtonIconLabelOrImageUrl: Property37.string(""),
+  _myRightFourthButtonEnabled: Property37.bool(true),
+  _myRightFourthButtonGamepadButtonID: Property37.enum(["Select", "Squeeze", "Thumbstick", "Top Button", "Bottom Button", "Left Button", "Right Button", "Menu", "Touchpad", "Thumb Rest"], "Bottom Button"),
+  _myRightFourthButtonGamepadHandedness: Property37.enum(["Left", "Right"], "Right"),
+  _myRightFourthButtonIconType: Property37.enum(["None", "Label", "Image", "Dot", "Circle", "Square", "Ring", "Frame"], "Ring"),
+  _myRightFourthButtonIconLabelOrImageUrl: Property37.string(""),
+  _myRightFifthButtonEnabled: Property37.bool(true),
+  _myRightFifthButtonGamepadButtonID: Property37.enum(["Select", "Squeeze", "Thumbstick", "Top Button", "Bottom Button", "Left Button", "Right Button", "Menu", "Touchpad", "Thumb Rest"], "Thumbstick"),
+  _myRightFifthButtonGamepadHandedness: Property37.enum(["Left", "Right"], "Right"),
+  _myRightFifthButtonIconType: Property37.enum(["None", "Label", "Image", "Dot", "Circle", "Square", "Ring", "Frame"], "Dot"),
+  _myRightFifthButtonIconLabelOrImageUrl: Property37.string(""),
+  _myRightThumbstickEnabled: Property37.bool(true),
+  _myRightThumbstickGamepadHandedness: Property37.enum(["Left", "Right"], "Right")
 });
 
 // node_modules/wle-pp/dist/pp/input/pose/components/set_player_height_component.js
-import { Component as Component81, Property as Property39 } from "@wonderlandengine/api";
-var SetPlayerHeightComponent = class extends Component81 {
+import { Component as Component82, Property as Property38 } from "@wonderlandengine/api";
+var SetPlayerHeightComponent = class extends Component82 {
   start() {
     let localPosition = this.object.pp_getPositionLocal();
     this.object.pp_setPositionLocal(vec3_create(localPosition[0], this._myEyesHeight, localPosition[2]));
@@ -52396,13 +52481,13 @@ var SetPlayerHeightComponent = class extends Component81 {
 };
 __publicField(SetPlayerHeightComponent, "TypeName", "pp-set-player-height");
 __publicField(SetPlayerHeightComponent, "Properties", {
-  _myEyesHeight: Property39.float(1.65),
-  _mySetOnlyOnStart: Property39.bool(false)
+  _myEyesHeight: Property38.float(1.65),
+  _mySetOnlyOnStart: Property38.bool(false)
 });
 
 // node_modules/wle-pp/dist/pp/input/pose/components/set_hand_local_transform_component.js
-import { Component as Component82, Property as Property40 } from "@wonderlandengine/api";
-var SetHandLocalTransformComponent = class extends Component82 {
+import { Component as Component83, Property as Property39 } from "@wonderlandengine/api";
+var SetHandLocalTransformComponent = class extends Component83 {
   start() {
     this._myHandednessType = InputUtils.getHandednessByIndex(this._myHandedness);
     this._myActivateOnNextUpdate = false;
@@ -52427,7 +52512,7 @@ var SetHandLocalTransformComponent = class extends Component82 {
 };
 __publicField(SetHandLocalTransformComponent, "TypeName", "pp-set-hand-local-transform");
 __publicField(SetHandLocalTransformComponent, "Properties", {
-  _myHandedness: Property40.enum(["Left", "Right"], "Left")
+  _myHandedness: Property39.enum(["Left", "Right"], "Left")
 });
 SetHandLocalTransformComponent.prototype._onPoseUpdated = function() {
   let handPoseTransform = quat2_create();
@@ -52445,8 +52530,8 @@ SetHandLocalTransformComponent.prototype._onPoseUpdated = function() {
 }();
 
 // node_modules/wle-pp/dist/pp/input/pose/components/set_hand_ray_local_transform_component.js
-import { Component as Component83, Property as Property41 } from "@wonderlandengine/api";
-var SetHandRayLocalTransformComponent = class extends Component83 {
+import { Component as Component84, Property as Property40 } from "@wonderlandengine/api";
+var SetHandRayLocalTransformComponent = class extends Component84 {
   start() {
     this._myHandednessType = InputUtils.getHandednessByIndex(this._myHandedness);
     this._myActivateOnNextUpdate = false;
@@ -52471,7 +52556,7 @@ var SetHandRayLocalTransformComponent = class extends Component83 {
 };
 __publicField(SetHandRayLocalTransformComponent, "TypeName", "pp-set-hand-ray-local-transform");
 __publicField(SetHandRayLocalTransformComponent, "Properties", {
-  _myHandedness: Property41.enum(["Left", "Right"], "Left")
+  _myHandedness: Property40.enum(["Left", "Right"], "Left")
 });
 SetHandRayLocalTransformComponent.prototype._onPoseUpdated = function() {
   let handPoseTransform = quat2_create();
@@ -52489,8 +52574,8 @@ SetHandRayLocalTransformComponent.prototype._onPoseUpdated = function() {
 }();
 
 // node_modules/wle-pp/dist/pp/input/pose/components/set_head_local_transform_component.js
-import { Component as Component84 } from "@wonderlandengine/api";
-var _SetHeadLocalTransformComponent = class extends Component84 {
+import { Component as Component85 } from "@wonderlandengine/api";
+var _SetHeadLocalTransformComponent = class extends Component85 {
   _myActivateOnNextUpdate = false;
   update(dt) {
     if (this._myActivateOnNextUpdate) {
@@ -52541,8 +52626,8 @@ __publicField(SetHeadLocalTransformComponent, "_onPoseUpdatedSV", {
 });
 
 // node_modules/wle-pp/dist/pp/input/pose/components/set_tracked_hand_joint_local_transform_component.js
-import { Component as Component85, Property as Property42 } from "@wonderlandengine/api";
-var SetTrackedHandJointLocalTransformComponent = class extends Component85 {
+import { Component as Component86, Property as Property41 } from "@wonderlandengine/api";
+var SetTrackedHandJointLocalTransformComponent = class extends Component86 {
   start() {
     this._myHandednessType = InputUtils.getHandednessByIndex(this._myHandedness);
     this._myJointIDType = InputUtils.getJointIDByIndex(this._myJointID);
@@ -52568,9 +52653,9 @@ var SetTrackedHandJointLocalTransformComponent = class extends Component85 {
 };
 __publicField(SetTrackedHandJointLocalTransformComponent, "TypeName", "pp-set-tracked-hand-joint-local-transform");
 __publicField(SetTrackedHandJointLocalTransformComponent, "Properties", {
-  _myHandedness: Property42.enum(["Left", "Right"], "Left"),
-  _mySetLocalScaleAsJointRadius: Property42.bool(false),
-  _myJointID: Property42.enum([
+  _myHandedness: Property41.enum(["Left", "Right"], "Left"),
+  _mySetLocalScaleAsJointRadius: Property41.bool(false),
+  _myJointID: Property41.enum([
     "Wrist",
     "Thumb Metacarpal",
     "Thumb Phalanx Proximal",
@@ -52617,8 +52702,8 @@ SetTrackedHandJointLocalTransformComponent.prototype._onPoseUpdated = function()
 }();
 
 // node_modules/wle-pp/dist/pp/input/pose/components/copy_hand_transform_component.js
-import { Component as Component86, Property as Property43 } from "@wonderlandengine/api";
-var CopyHandTransformComponent = class extends Component86 {
+import { Component as Component87, Property as Property42 } from "@wonderlandengine/api";
+var CopyHandTransformComponent = class extends Component87 {
   init() {
     this._myHandednessType = InputUtils.getHandednessByIndex(this._myHandedness);
   }
@@ -52630,12 +52715,12 @@ var CopyHandTransformComponent = class extends Component86 {
 };
 __publicField(CopyHandTransformComponent, "TypeName", "pp-copy-hand-transform");
 __publicField(CopyHandTransformComponent, "Properties", {
-  _myHandedness: Property43.enum(["Left", "Right"], "Left")
+  _myHandedness: Property42.enum(["Left", "Right"], "Left")
 });
 
 // node_modules/wle-pp/dist/pp/input/pose/components/copy_head_transform_component.js
-import { Component as Component87 } from "@wonderlandengine/api";
-var CopyHeadTransformComponent = class extends Component87 {
+import { Component as Component88 } from "@wonderlandengine/api";
+var CopyHeadTransformComponent = class extends Component88 {
   update(dt) {
     let head = Globals.getPlayerObjects(this.engine).myHead;
     this.object.pp_setTransformQuat(head.pp_getTransformQuat());
@@ -52645,8 +52730,8 @@ var CopyHeadTransformComponent = class extends Component87 {
 __publicField(CopyHeadTransformComponent, "TypeName", "pp-copy-head-transform");
 
 // node_modules/wle-pp/dist/pp/input/pose/components/copy_player_transform_component.js
-import { Component as Component88 } from "@wonderlandengine/api";
-var CopyPlayerTransformComponent = class extends Component88 {
+import { Component as Component89 } from "@wonderlandengine/api";
+var CopyPlayerTransformComponent = class extends Component89 {
   update(dt) {
     let player = Globals.getPlayerObjects(this.engine).myPlayer;
     this.object.pp_setTransformQuat(player.pp_getTransformQuat());
@@ -52656,8 +52741,8 @@ var CopyPlayerTransformComponent = class extends Component88 {
 __publicField(CopyPlayerTransformComponent, "TypeName", "pp-copy-player-transform");
 
 // node_modules/wle-pp/dist/pp/input/pose/components/copy_reference_space_transform_component.js
-import { Component as Component89 } from "@wonderlandengine/api";
-var CopyReferenceSpaceTransformComponent = class extends Component89 {
+import { Component as Component90 } from "@wonderlandengine/api";
+var CopyReferenceSpaceTransformComponent = class extends Component90 {
   update(dt) {
     let referenceSpace = Globals.getPlayerObjects(this.engine).myReferenceSpace;
     this.object.pp_setTransformQuat(referenceSpace.pp_getTransformQuat());
@@ -52679,8 +52764,8 @@ var ToolInputSourceType = {
 };
 
 // node_modules/wle-pp/dist/pp/tool/cauldron/components/tool_cursor_component.js
-import { Component as Component90, MeshComponent as MeshComponent16, Property as Property44, ViewComponent as ViewComponent6 } from "@wonderlandengine/api";
-var ToolCursorComponent = class extends Component90 {
+import { Component as Component91, MeshComponent as MeshComponent16, Property as Property43, ViewComponent as ViewComponent6 } from "@wonderlandengine/api";
+var ToolCursorComponent = class extends Component91 {
   init() {
     this._myHandednessType = InputUtils.getHandednessByIndex(this._myHandedness);
     this._myCursorPositionDefaultOffset = vec3_create(0, -0.035, 0.05);
@@ -52804,11 +52889,11 @@ var ToolCursorComponent = class extends Component90 {
 };
 __publicField(ToolCursorComponent, "TypeName", "pp-tool-cursor");
 __publicField(ToolCursorComponent, "Properties", {
-  _myHandedness: Property44.enum(["Left", "Right"], "Left"),
-  _myApplyDefaultCursorOffset: Property44.bool(true),
-  _myPulseOnHover: Property44.bool(false),
-  _myShowFingerCursor: Property44.bool(false),
-  _myUpdatePointerCursorStyle: Property44.bool(true)
+  _myHandedness: Property43.enum(["Left", "Right"], "Left"),
+  _myApplyDefaultCursorOffset: Property43.bool(true),
+  _myPulseOnHover: Property43.bool(false),
+  _myShowFingerCursor: Property43.bool(false),
+  _myUpdatePointerCursorStyle: Property43.bool(true)
 });
 ToolCursorComponent.prototype.update = function() {
   let transformQuat4 = quat2_create();
@@ -54590,8 +54675,8 @@ var ConsoleVRWidget = class {
 };
 
 // node_modules/wle-pp/dist/pp/tool/console_vr/components/console_vr_tool_component.js
-import { Component as Component91, Property as Property45 } from "@wonderlandengine/api";
-var ConsoleVRToolComponent = class extends Component91 {
+import { Component as Component92, Property as Property44 } from "@wonderlandengine/api";
+var ConsoleVRToolComponent = class extends Component92 {
   _start() {
     this._myWidget = new ConsoleVRWidget(this.engine);
     let params = new ConsoleVRWidgetParams(this.engine);
@@ -54647,17 +54732,17 @@ var ConsoleVRToolComponent = class extends Component91 {
 };
 __publicField(ConsoleVRToolComponent, "TypeName", "pp-console-vr-tool");
 __publicField(ConsoleVRToolComponent, "Properties", {
-  _myHandedness: Property45.enum(["None", "Left", "Right"], "None"),
-  _myOverrideBrowserConsoleFunctions: Property45.enum(["None", "All", "Errors & Warns"], "All"),
-  _myEnableOnlyForVR: Property45.bool(true),
-  _myShowOnStart: Property45.bool(false),
-  _myShowVisibilityButton: Property45.bool(false),
-  _myFilterByError: Property45.bool(false),
-  _myPulseOnNewMessage: Property45.enum(["Never", "Always", "When Hidden"], "Never")
+  _myHandedness: Property44.enum(["None", "Left", "Right"], "None"),
+  _myOverrideBrowserConsoleFunctions: Property44.enum(["None", "All", "Errors & Warns"], "All"),
+  _myEnableOnlyForVR: Property44.bool(true),
+  _myShowOnStart: Property44.bool(false),
+  _myShowVisibilityButton: Property44.bool(false),
+  _myFilterByError: Property44.bool(false),
+  _myPulseOnNewMessage: Property44.enum(["Never", "Always", "When Hidden"], "Never")
 });
 
 // node_modules/wle-pp/dist/pp/tool/easy_tune/components/easy_tune_tool_component.js
-import { Component as Component92, property as property29 } from "@wonderlandengine/api";
+import { Component as Component93, property as property31 } from "@wonderlandengine/api";
 
 // node_modules/wle-pp/dist/pp/tool/easy_tune/easy_tune_widgets/base/easy_tune_base_widget.js
 import { Emitter as Emitter23 } from "@wonderlandengine/api";
@@ -54698,14 +54783,16 @@ var EasyTuneBaseWidget = class {
     this._myVisible = visible;
   }
   setEasyTuneVariable(variable, appendToVariableName) {
-    this._myVariable = variable;
-    if (appendToVariableName != null) {
-      this._myAppendToVariableName = appendToVariableName;
-    } else {
-      this._myAppendToVariableName = "";
+    if (this._myVariable != variable || this._myAppendToVariableName != appendToVariableName) {
+      this._myVariable = variable;
+      if (appendToVariableName != null) {
+        this._myAppendToVariableName = appendToVariableName;
+      } else {
+        this._myAppendToVariableName = "";
+      }
+      this._setEasyTuneVariableHook();
+      this._refreshUI();
     }
-    this._setEasyTuneVariableHook();
-    this._refreshUI();
   }
   isScrollVariableActive() {
     return this._myScrollVariableActive;
@@ -55404,6 +55491,8 @@ var EasyTuneBaseWidgetUI = class {
     this.myExportButtonCollisionComponent.collider = this._myConfig.myCursorTargetCollisionCollider;
     this.myExportButtonCollisionComponent.group = 1 << this._myConfig.myCursorTargetCollisionGroup;
     this.myExportButtonCollisionComponent.extents = this._myConfig.myImportExportButtonCollisionExtents;
+    this.myPointerCursorTargetComponent = this.myPointerCursorTarget.pp_addComponent(CursorTarget);
+    this.myPointerCursorTargetComponent.isSurface = true;
     this.myPointerCollisionComponent = this.myPointerCursorTarget.pp_addComponent(CollisionComponent9);
     this.myPointerCollisionComponent.collider = this._myConfig.myCursorTargetCollisionCollider;
     this.myPointerCollisionComponent.group = 1 << this._myConfig.myCursorTargetCollisionGroup;
@@ -57763,7 +57852,7 @@ var EasyTuneWidget = class {
 };
 
 // node_modules/wle-pp/dist/pp/tool/easy_tune/components/easy_tune_tool_component.js
-var __decorate29 = function(decorators, target, key, desc) {
+var __decorate31 = function(decorators, target, key, desc) {
   var c = arguments.length, r = c < 3 ? target : desc === null ? desc = Object.getOwnPropertyDescriptor(target, key) : desc, d;
   if (typeof Reflect === "object" && typeof Reflect.decorate === "function")
     r = Reflect.decorate(decorators, target, key, desc);
@@ -57773,7 +57862,7 @@ var __decorate29 = function(decorators, target, key, desc) {
         r = (c < 3 ? d(r) : c > 3 ? d(target, key, r) : d(target, key)) || r;
   return c > 3 && r && Object.defineProperty(target, key, r), r;
 };
-var EasyTuneToolComponent = class extends Component92 {
+var EasyTuneToolComponent = class extends Component93 {
   _myHandedness;
   _myShowOnStart;
   _myShowVisibilityButton;
@@ -57891,43 +57980,43 @@ var EasyTuneToolComponent = class extends Component92 {
   }
 };
 __publicField(EasyTuneToolComponent, "TypeName", "pp-easy-tune-tool");
-__decorate29([
-  property29.enum(["None", "Left", "Right"], "None")
+__decorate31([
+  property31.enum(["None", "Left", "Right"], "None")
 ], EasyTuneToolComponent.prototype, "_myHandedness", void 0);
-__decorate29([
-  property29.bool(false)
+__decorate31([
+  property31.bool(false)
 ], EasyTuneToolComponent.prototype, "_myShowOnStart", void 0);
-__decorate29([
-  property29.bool(false)
+__decorate31([
+  property31.bool(false)
 ], EasyTuneToolComponent.prototype, "_myShowVisibilityButton", void 0);
-__decorate29([
-  property29.bool(true)
+__decorate31([
+  property31.bool(true)
 ], EasyTuneToolComponent.prototype, "_myGamepadScrollVariableEnabled", void 0);
-__decorate29([
-  property29.bool(false)
+__decorate31([
+  property31.bool(false)
 ], EasyTuneToolComponent.prototype, "_myShowVariablesImportExportButtons", void 0);
-__decorate29([
-  property29.string("")
+__decorate31([
+  property31.string("")
 ], EasyTuneToolComponent.prototype, "_myVariablesImportURL", void 0);
-__decorate29([
-  property29.string("")
+__decorate31([
+  property31.string("")
 ], EasyTuneToolComponent.prototype, "_myVariablesExportURL", void 0);
-__decorate29([
-  property29.bool(false)
+__decorate31([
+  property31.bool(false)
 ], EasyTuneToolComponent.prototype, "_myImportVariablesOnStart", void 0);
-__decorate29([
-  property29.bool(false)
+__decorate31([
+  property31.bool(false)
 ], EasyTuneToolComponent.prototype, "_myResetVariablesDefaultValueOnImport", void 0);
-__decorate29([
-  property29.bool(true)
+__decorate31([
+  property31.bool(true)
 ], EasyTuneToolComponent.prototype, "_myKeepImportVariablesOnExport", void 0);
-__decorate29([
-  property29.bool(true)
+__decorate31([
+  property31.bool(true)
 ], EasyTuneToolComponent.prototype, "_myAvoidExportingVariablesWithValueAsDefault", void 0);
 
 // node_modules/wle-pp/dist/pp/tool/easy_tune/components/easy_tune_import_variables_component.js
-import { Component as Component93, Property as Property46 } from "@wonderlandengine/api";
-var EasyTuneImportVariablesComponent = class extends Component93 {
+import { Component as Component94, Property as Property45 } from "@wonderlandengine/api";
+var EasyTuneImportVariablesComponent = class extends Component94 {
   start() {
     this._myFirstUpdate = true;
   }
@@ -57940,8 +58029,8 @@ var EasyTuneImportVariablesComponent = class extends Component93 {
 };
 __publicField(EasyTuneImportVariablesComponent, "TypeName", "pp-easy-tune-import-variables");
 __publicField(EasyTuneImportVariablesComponent, "Properties", {
-  _myVariablesImportURL: Property46.string(""),
-  _myResetVariablesDefaultValueOnImport: Property46.bool(true)
+  _myVariablesImportURL: Property45.string(""),
+  _myResetVariablesDefaultValueOnImport: Property45.bool(true)
 });
 
 // node_modules/wle-pp/dist/pp/tool/easy_tune/easy_object_tuners/easy_light_attenuation.js
@@ -58291,8 +58380,8 @@ __publicField(EasyTextColor, "_myColorVariableNames", {
 });
 
 // node_modules/wle-pp/dist/pp/tool/easy_tune/easy_object_tuners/components/easy_light_attenuation_component.js
-import { Component as Component94, property as property30 } from "@wonderlandengine/api";
-var __decorate30 = function(decorators, target, key, desc) {
+import { Component as Component95, property as property32 } from "@wonderlandengine/api";
+var __decorate32 = function(decorators, target, key, desc) {
   var c = arguments.length, r = c < 3 ? target : desc === null ? desc = Object.getOwnPropertyDescriptor(target, key) : desc, d;
   if (typeof Reflect === "object" && typeof Reflect.decorate === "function")
     r = Reflect.decorate(decorators, target, key, desc);
@@ -58302,7 +58391,7 @@ var __decorate30 = function(decorators, target, key, desc) {
         r = (c < 3 ? d(r) : c > 3 ? d(target, key, r) : d(target, key)) || r;
   return c > 3 && r && Object.defineProperty(target, key, r), r;
 };
-var EasyLightAttenuationComponent = class extends Component94 {
+var EasyLightAttenuationComponent = class extends Component95 {
   _myVariableName;
   _mySetAsWidgetCurrentVariable;
   _myUseTuneTarget;
@@ -58336,19 +58425,19 @@ var EasyLightAttenuationComponent = class extends Component94 {
   }
 };
 __publicField(EasyLightAttenuationComponent, "TypeName", "pp-easy-light-attenuation");
-__decorate30([
-  property30.string("")
+__decorate32([
+  property32.string("")
 ], EasyLightAttenuationComponent.prototype, "_myVariableName", void 0);
-__decorate30([
-  property30.bool(false)
+__decorate32([
+  property32.bool(false)
 ], EasyLightAttenuationComponent.prototype, "_mySetAsWidgetCurrentVariable", void 0);
-__decorate30([
-  property30.bool(false)
+__decorate32([
+  property32.bool(false)
 ], EasyLightAttenuationComponent.prototype, "_myUseTuneTarget", void 0);
 
 // node_modules/wle-pp/dist/pp/tool/easy_tune/easy_object_tuners/components/easy_light_color_component.js
-import { Component as Component95, property as property31 } from "@wonderlandengine/api";
-var __decorate31 = function(decorators, target, key, desc) {
+import { Component as Component96, property as property33 } from "@wonderlandengine/api";
+var __decorate33 = function(decorators, target, key, desc) {
   var c = arguments.length, r = c < 3 ? target : desc === null ? desc = Object.getOwnPropertyDescriptor(target, key) : desc, d;
   if (typeof Reflect === "object" && typeof Reflect.decorate === "function")
     r = Reflect.decorate(decorators, target, key, desc);
@@ -58358,7 +58447,7 @@ var __decorate31 = function(decorators, target, key, desc) {
         r = (c < 3 ? d(r) : c > 3 ? d(target, key, r) : d(target, key)) || r;
   return c > 3 && r && Object.defineProperty(target, key, r), r;
 };
-var EasyLightColorComponent = class extends Component95 {
+var EasyLightColorComponent = class extends Component96 {
   _myVariableName;
   _mySetAsWidgetCurrentVariable;
   _myUseTuneTarget;
@@ -58393,22 +58482,22 @@ var EasyLightColorComponent = class extends Component95 {
   }
 };
 __publicField(EasyLightColorComponent, "TypeName", "pp-easy-light-color");
-__decorate31([
-  property31.string("")
+__decorate33([
+  property33.string("")
 ], EasyLightColorComponent.prototype, "_myVariableName", void 0);
-__decorate31([
-  property31.bool(false)
+__decorate33([
+  property33.bool(false)
 ], EasyLightColorComponent.prototype, "_mySetAsWidgetCurrentVariable", void 0);
-__decorate31([
-  property31.bool(false)
+__decorate33([
+  property33.bool(false)
 ], EasyLightColorComponent.prototype, "_myUseTuneTarget", void 0);
-__decorate31([
-  property31.enum([ColorModel[ColorModel.RGB], ColorModel[ColorModel.HSV]], ColorModel[ColorModel.HSV])
+__decorate33([
+  property33.enum([ColorModel[ColorModel.RGB], ColorModel[ColorModel.HSV]], ColorModel[ColorModel.HSV])
 ], EasyLightColorComponent.prototype, "_myColorModel", void 0);
 
 // node_modules/wle-pp/dist/pp/tool/easy_tune/easy_object_tuners/components/easy_mesh_color_component.js
-import { Component as Component96, property as property32 } from "@wonderlandengine/api";
-var __decorate32 = function(decorators, target, key, desc) {
+import { Component as Component97, property as property34 } from "@wonderlandengine/api";
+var __decorate34 = function(decorators, target, key, desc) {
   var c = arguments.length, r = c < 3 ? target : desc === null ? desc = Object.getOwnPropertyDescriptor(target, key) : desc, d;
   if (typeof Reflect === "object" && typeof Reflect.decorate === "function")
     r = Reflect.decorate(decorators, target, key, desc);
@@ -58418,7 +58507,7 @@ var __decorate32 = function(decorators, target, key, desc) {
         r = (c < 3 ? d(r) : c > 3 ? d(target, key, r) : d(target, key)) || r;
   return c > 3 && r && Object.defineProperty(target, key, r), r;
 };
-var EasyMeshColorComponent = class extends Component96 {
+var EasyMeshColorComponent = class extends Component97 {
   _myVariableName;
   _mySetAsWidgetCurrentVariable;
   _myUseTuneTarget;
@@ -58454,25 +58543,25 @@ var EasyMeshColorComponent = class extends Component96 {
   }
 };
 __publicField(EasyMeshColorComponent, "TypeName", "pp-easy-mesh-color");
-__decorate32([
-  property32.string("")
+__decorate34([
+  property34.string("")
 ], EasyMeshColorComponent.prototype, "_myVariableName", void 0);
-__decorate32([
-  property32.bool(false)
+__decorate34([
+  property34.bool(false)
 ], EasyMeshColorComponent.prototype, "_mySetAsWidgetCurrentVariable", void 0);
-__decorate32([
-  property32.bool(false)
+__decorate34([
+  property34.bool(false)
 ], EasyMeshColorComponent.prototype, "_myUseTuneTarget", void 0);
-__decorate32([
-  property32.enum([ColorModel[ColorModel.RGB], ColorModel[ColorModel.HSV]], ColorModel[ColorModel.HSV])
+__decorate34([
+  property34.enum([ColorModel[ColorModel.RGB], ColorModel[ColorModel.HSV]], ColorModel[ColorModel.HSV])
 ], EasyMeshColorComponent.prototype, "_myColorModel", void 0);
-__decorate32([
-  property32.enum(["Color", "Diffuse Color", "Ambient Color", "Specular Color", "Emissive Color", "Fog Color"], "Color")
+__decorate34([
+  property34.enum(["Color", "Diffuse Color", "Ambient Color", "Specular Color", "Emissive Color", "Fog Color"], "Color")
 ], EasyMeshColorComponent.prototype, "_myColorType", void 0);
 
 // node_modules/wle-pp/dist/pp/tool/easy_tune/easy_object_tuners/components/easy_scale_component.js
-import { Component as Component97, property as property33 } from "@wonderlandengine/api";
-var __decorate33 = function(decorators, target, key, desc) {
+import { Component as Component98, property as property35 } from "@wonderlandengine/api";
+var __decorate35 = function(decorators, target, key, desc) {
   var c = arguments.length, r = c < 3 ? target : desc === null ? desc = Object.getOwnPropertyDescriptor(target, key) : desc, d;
   if (typeof Reflect === "object" && typeof Reflect.decorate === "function")
     r = Reflect.decorate(decorators, target, key, desc);
@@ -58482,7 +58571,7 @@ var __decorate33 = function(decorators, target, key, desc) {
         r = (c < 3 ? d(r) : c > 3 ? d(target, key, r) : d(target, key)) || r;
   return c > 3 && r && Object.defineProperty(target, key, r), r;
 };
-var EasyScaleComponent = class extends Component97 {
+var EasyScaleComponent = class extends Component98 {
   _myVariableName;
   _mySetAsWidgetCurrentVariable;
   _myUseTuneTarget;
@@ -58520,28 +58609,28 @@ var EasyScaleComponent = class extends Component97 {
   }
 };
 __publicField(EasyScaleComponent, "TypeName", "pp-easy-scale");
-__decorate33([
-  property33.string("")
+__decorate35([
+  property35.string("")
 ], EasyScaleComponent.prototype, "_myVariableName", void 0);
-__decorate33([
-  property33.bool(false)
+__decorate35([
+  property35.bool(false)
 ], EasyScaleComponent.prototype, "_mySetAsWidgetCurrentVariable", void 0);
-__decorate33([
-  property33.bool(false)
+__decorate35([
+  property35.bool(false)
 ], EasyScaleComponent.prototype, "_myUseTuneTarget", void 0);
-__decorate33([
-  property33.bool(true)
+__decorate35([
+  property35.bool(true)
 ], EasyScaleComponent.prototype, "_myLocal", void 0);
-__decorate33([
-  property33.bool(true)
+__decorate35([
+  property35.bool(true)
 ], EasyScaleComponent.prototype, "_myScaleAsOne", void 0);
-__decorate33([
-  property33.float(1)
+__decorate35([
+  property35.float(1)
 ], EasyScaleComponent.prototype, "_myStepPerSecond", void 0);
 
 // node_modules/wle-pp/dist/pp/tool/easy_tune/easy_object_tuners/components/easy_set_tune_target_child_number_component.js
-import { Component as Component98, Property as Property47 } from "@wonderlandengine/api";
-var EasySetTuneTargetChildNumberComponent = class extends Component98 {
+import { Component as Component99, Property as Property46 } from "@wonderlandengine/api";
+var EasySetTuneTargetChildNumberComponent = class extends Component99 {
   start() {
     if (Globals.isToolEnabled(this.engine)) {
       this._myEasyTuneVariableName = "Target Child ";
@@ -58607,13 +58696,13 @@ var EasySetTuneTargetChildNumberComponent = class extends Component98 {
 };
 __publicField(EasySetTuneTargetChildNumberComponent, "TypeName", "pp-easy-set-tune-target-child-number");
 __publicField(EasySetTuneTargetChildNumberComponent, "Properties", {
-  _myVariableName: Property47.string(""),
-  _mySetAsWidgetCurrentVariable: Property47.bool(false)
+  _myVariableName: Property46.string(""),
+  _mySetAsWidgetCurrentVariable: Property46.bool(false)
 });
 
 // node_modules/wle-pp/dist/pp/tool/easy_tune/easy_object_tuners/components/easy_set_tune_target_grab_component.js
-import { Component as Component99 } from "@wonderlandengine/api";
-var EasySetTuneTargeetGrabComponent = class extends Component99 {
+import { Component as Component100 } from "@wonderlandengine/api";
+var EasySetTuneTargeetGrabComponent = class extends Component100 {
   start() {
     this._myGrabber = null;
     this._myEasyTuneTarget = null;
@@ -58654,8 +58743,8 @@ var EasySetTuneTargeetGrabComponent = class extends Component99 {
 __publicField(EasySetTuneTargeetGrabComponent, "TypeName", "pp-easy-set-tune-target-grab");
 
 // node_modules/wle-pp/dist/pp/tool/easy_tune/easy_object_tuners/components/easy_text_color_component.js
-import { Component as Component100, property as property34 } from "@wonderlandengine/api";
-var __decorate34 = function(decorators, target, key, desc) {
+import { Component as Component101, property as property36 } from "@wonderlandengine/api";
+var __decorate36 = function(decorators, target, key, desc) {
   var c = arguments.length, r = c < 3 ? target : desc === null ? desc = Object.getOwnPropertyDescriptor(target, key) : desc, d;
   if (typeof Reflect === "object" && typeof Reflect.decorate === "function")
     r = Reflect.decorate(decorators, target, key, desc);
@@ -58665,7 +58754,7 @@ var __decorate34 = function(decorators, target, key, desc) {
         r = (c < 3 ? d(r) : c > 3 ? d(target, key, r) : d(target, key)) || r;
   return c > 3 && r && Object.defineProperty(target, key, r), r;
 };
-var EasyTextColorComponent = class extends Component100 {
+var EasyTextColorComponent = class extends Component101 {
   _myVariableName;
   _mySetAsWidgetCurrentVariable;
   _myUseTuneTarget;
@@ -58701,25 +58790,25 @@ var EasyTextColorComponent = class extends Component100 {
   }
 };
 __publicField(EasyTextColorComponent, "TypeName", "pp-easy-text-color");
-__decorate34([
-  property34.string("")
+__decorate36([
+  property36.string("")
 ], EasyTextColorComponent.prototype, "_myVariableName", void 0);
-__decorate34([
-  property34.bool(false)
+__decorate36([
+  property36.bool(false)
 ], EasyTextColorComponent.prototype, "_mySetAsWidgetCurrentVariable", void 0);
-__decorate34([
-  property34.bool(false)
+__decorate36([
+  property36.bool(false)
 ], EasyTextColorComponent.prototype, "_myUseTuneTarget", void 0);
-__decorate34([
-  property34.enum([ColorModel[ColorModel.RGB], ColorModel[ColorModel.HSV]], ColorModel[ColorModel.HSV])
+__decorate36([
+  property36.enum([ColorModel[ColorModel.RGB], ColorModel[ColorModel.HSV]], ColorModel[ColorModel.HSV])
 ], EasyTextColorComponent.prototype, "_myColorModel", void 0);
-__decorate34([
-  property34.enum(["Color", "Effect Color"], "Color")
+__decorate36([
+  property36.enum(["Color", "Effect Color"], "Color")
 ], EasyTextColorComponent.prototype, "_myColorType", void 0);
 
 // node_modules/wle-pp/dist/pp/tool/easy_tune/easy_object_tuners/components/easy_transform_component.js
-import { Component as Component101, property as property35 } from "@wonderlandengine/api";
-var __decorate35 = function(decorators, target, key, desc) {
+import { Component as Component102, property as property37 } from "@wonderlandengine/api";
+var __decorate37 = function(decorators, target, key, desc) {
   var c = arguments.length, r = c < 3 ? target : desc === null ? desc = Object.getOwnPropertyDescriptor(target, key) : desc, d;
   if (typeof Reflect === "object" && typeof Reflect.decorate === "function")
     r = Reflect.decorate(decorators, target, key, desc);
@@ -58729,7 +58818,7 @@ var __decorate35 = function(decorators, target, key, desc) {
         r = (c < 3 ? d(r) : c > 3 ? d(target, key, r) : d(target, key)) || r;
   return c > 3 && r && Object.defineProperty(target, key, r), r;
 };
-var EasyTransformComponent = class extends Component101 {
+var EasyTransformComponent = class extends Component102 {
   _myVariableName;
   _mySetAsWidgetCurrentVariable;
   _myUseTuneTarget;
@@ -58769,34 +58858,34 @@ var EasyTransformComponent = class extends Component101 {
   }
 };
 __publicField(EasyTransformComponent, "TypeName", "pp-easy-transform");
-__decorate35([
-  property35.string("")
+__decorate37([
+  property37.string("")
 ], EasyTransformComponent.prototype, "_myVariableName", void 0);
-__decorate35([
-  property35.bool(false)
+__decorate37([
+  property37.bool(false)
 ], EasyTransformComponent.prototype, "_mySetAsWidgetCurrentVariable", void 0);
-__decorate35([
-  property35.bool(false)
+__decorate37([
+  property37.bool(false)
 ], EasyTransformComponent.prototype, "_myUseTuneTarget", void 0);
-__decorate35([
-  property35.bool(true)
+__decorate37([
+  property37.bool(true)
 ], EasyTransformComponent.prototype, "_myLocal", void 0);
-__decorate35([
-  property35.bool(true)
+__decorate37([
+  property37.bool(true)
 ], EasyTransformComponent.prototype, "_myScaleAsOne", void 0);
-__decorate35([
-  property35.float(1)
+__decorate37([
+  property37.float(1)
 ], EasyTransformComponent.prototype, "_myPositionStepPerSecond", void 0);
-__decorate35([
-  property35.float(50)
+__decorate37([
+  property37.float(50)
 ], EasyTransformComponent.prototype, "_myRotationStepPerSecond", void 0);
-__decorate35([
-  property35.float(1)
+__decorate37([
+  property37.float(1)
 ], EasyTransformComponent.prototype, "_myScaleStepPerSecond", void 0);
 
 // src/playground/components/fade_view_component.js
-import { Component as Component102, Property as Property48 } from "@wonderlandengine/api";
-var FadeViewComponent = class extends Component102 {
+import { Component as Component103, Property as Property47 } from "@wonderlandengine/api";
+var FadeViewComponent = class extends Component103 {
   start() {
     this._myFadeVisual = null;
     this._myFirstUpdate = true;
@@ -58860,20 +58949,20 @@ var FadeViewComponent = class extends Component102 {
 };
 __publicField(FadeViewComponent, "TypeName", "fade-view");
 __publicField(FadeViewComponent, "Properties", {
-  _myColor: Property48.string("0, 0, 0"),
-  _myTimeToFadeIn: Property48.float(0),
-  _myStartDelay: Property48.float(0)
+  _myColor: Property47.string("0, 0, 0"),
+  _myTimeToFadeIn: Property47.float(0),
+  _myStartDelay: Property47.float(0)
 });
 
 // src/playground/components/fun_component.ts
-import { Component as Component105 } from "@wonderlandengine/api";
+import { Component as Component106 } from "@wonderlandengine/api";
 
 // src/playground/components/particles_spawner_component.js
-import { Component as Component104, MeshComponent as MeshComponent24, Property as Property49 } from "@wonderlandengine/api";
+import { Component as Component105, MeshComponent as MeshComponent24, Property as Property48 } from "@wonderlandengine/api";
 
 // src/playground/components/particle_component.js
-import { Component as Component103 } from "@wonderlandengine/api";
-var ParticleComponent = class extends Component103 {
+import { Component as Component104 } from "@wonderlandengine/api";
+var ParticleComponent = class extends Component104 {
   init() {
     this._myOnDoneCallback = null;
   }
@@ -58933,7 +59022,7 @@ var ParticleComponent = class extends Component103 {
 __publicField(ParticleComponent, "TypeName", "particle");
 
 // src/playground/components/particles_spawner_component.js
-var ParticlesSpawnerComponent = class extends Component104 {
+var ParticlesSpawnerComponent = class extends Component105 {
   start() {
     this._myStartFrameCountdown = 1;
   }
@@ -58998,12 +59087,12 @@ var ParticlesSpawnerComponent = class extends Component104 {
 };
 __publicField(ParticlesSpawnerComponent, "TypeName", "particles-spawner");
 __publicField(ParticlesSpawnerComponent, "Properties", {
-  _myParticlesContainer: Property49.object(),
-  _myRadius: Property49.float(0.25)
+  _myParticlesContainer: Property48.object(),
+  _myRadius: Property48.float(0.25)
 });
 
 // src/playground/components/fun_component.ts
-var FunComponent = class extends Component105 {
+var FunComponent = class extends Component106 {
   _myParticlesSpawner;
   start() {
     this._myParticlesSpawner = Globals.getRootObject(this.engine).pp_getComponent(ParticlesSpawnerComponent);
@@ -59020,8 +59109,8 @@ var FunComponent = class extends Component105 {
 __publicField(FunComponent, "TypeName", "fun");
 
 // src/playground/components/grabbable_spawner_component.js
-import { Component as Component106, Property as Property50 } from "@wonderlandengine/api";
-var GrabbableSpawnerComponent = class extends Component106 {
+import { Component as Component107, Property as Property49 } from "@wonderlandengine/api";
+var GrabbableSpawnerComponent = class extends Component107 {
   start() {
     this._myPrototypes = this._myPrototypesContainer.pp_getChildren();
     this._myCurrentGrabbable = null;
@@ -59060,12 +59149,12 @@ var GrabbableSpawnerComponent = class extends Component106 {
 };
 __publicField(GrabbableSpawnerComponent, "TypeName", "grabbable-spawner");
 __publicField(GrabbableSpawnerComponent, "Properties", {
-  _myPrototypesContainer: Property50.object()
+  _myPrototypesContainer: Property49.object()
 });
 
 // src/playground/components/load_audio_component.js
-import { Component as Component107 } from "@wonderlandengine/api";
-var LoadAudioComponent = class extends Component107 {
+import { Component as Component108 } from "@wonderlandengine/api";
+var LoadAudioComponent = class extends Component108 {
   start() {
     this._myFirstUpdate = true;
   }
@@ -59117,8 +59206,8 @@ var LoadAudioComponent = class extends Component107 {
 __publicField(LoadAudioComponent, "TypeName", "load-audio");
 
 // src/playground/components/play_music_component.js
-import { Component as Component108 } from "@wonderlandengine/api";
-var PlayMusicComponent = class extends Component108 {
+import { Component as Component109 } from "@wonderlandengine/api";
+var PlayMusicComponent = class extends Component109 {
   start() {
     this._myStarted = false;
   }
@@ -59145,11 +59234,11 @@ var PlayMusicComponent = class extends Component108 {
 __publicField(PlayMusicComponent, "TypeName", "play-music");
 
 // src/playground/components/playground_gateway_component.js
-import { Component as Component113 } from "@wonderlandengine/api";
+import { Component as Component114 } from "@wonderlandengine/api";
 
 // src/playground/components/sfx_on_collision_component.js
-import { Component as Component109, PhysXComponent as PhysXComponent13 } from "@wonderlandengine/api";
-var SFXOnCollisionComponent = class extends Component109 {
+import { Component as Component110, PhysXComponent as PhysXComponent13 } from "@wonderlandengine/api";
+var SFXOnCollisionComponent = class extends Component110 {
   start() {
     this._myPhysX = this.object.pp_getComponent(PhysXComponent13);
     if (this._myPhysX != null) {
@@ -59196,8 +59285,8 @@ var SFXOnCollisionComponent = class extends Component109 {
 __publicField(SFXOnCollisionComponent, "TypeName", "sfx-on-collision");
 
 // src/playground/components/sfx_on_grab_throw_component.js
-import { Component as Component110 } from "@wonderlandengine/api";
-var SFXOnGrabThrowComponent = class extends Component110 {
+import { Component as Component111 } from "@wonderlandengine/api";
+var SFXOnGrabThrowComponent = class extends Component111 {
   start() {
     this._myGrabbers = null;
     this._myStarted = false;
@@ -59252,8 +59341,8 @@ var SFXOnGrabThrowComponent = class extends Component110 {
 __publicField(SFXOnGrabThrowComponent, "TypeName", "sfx-on-grab-throw");
 
 // src/playground/components/target_hit_check_component.js
-import { Component as Component111, PhysXComponent as PhysXComponent14 } from "@wonderlandengine/api";
-var TargetHitCheckComponent = class extends Component111 {
+import { Component as Component112, PhysXComponent as PhysXComponent14 } from "@wonderlandengine/api";
+var TargetHitCheckComponent = class extends Component112 {
   start() {
     this._myCollisionsCollector = null;
     this._myStarted = false;
@@ -59303,8 +59392,8 @@ var TargetHitCheckComponent = class extends Component111 {
 __publicField(TargetHitCheckComponent, "TypeName", "target-hit-check");
 
 // src/playground/components/wave_movement_component.js
-import { Component as Component112 } from "@wonderlandengine/api";
-var WaveMovementComponent = class extends Component112 {
+import { Component as Component113 } from "@wonderlandengine/api";
+var WaveMovementComponent = class extends Component113 {
   start() {
     this._myStarted = false;
   }
@@ -59387,7 +59476,7 @@ function registerPlaygroundComponents(engine) {
 
 // src/playground/components/playground_gateway_component.js
 var _myRegisteredEngines2 = /* @__PURE__ */ new WeakMap();
-var PlaygroundGatewayComponent = class extends Component113 {
+var PlaygroundGatewayComponent = class extends Component114 {
   static onRegister(engine) {
     if (!_myRegisteredEngines2.has(engine)) {
       _myRegisteredEngines2.set(engine, null);
@@ -59398,8 +59487,8 @@ var PlaygroundGatewayComponent = class extends Component113 {
 __publicField(PlaygroundGatewayComponent, "TypeName", "playground-gateway");
 
 // src/playground/components/set_active_on_mobile_component.js
-import { Component as Component114, Property as Property51 } from "@wonderlandengine/api";
-var SetActiveOnMobileComponent = class extends Component114 {
+import { Component as Component115, Property as Property50 } from "@wonderlandengine/api";
+var SetActiveOnMobileComponent = class extends Component115 {
   update(dt) {
     if (BrowserUtils.isMobile() && !this._myActiveOnMobile || !BrowserUtils.isMobile() && this._myActiveOnMobile) {
       this.object.pp_setActiveDescendants(false);
@@ -59410,12 +59499,12 @@ var SetActiveOnMobileComponent = class extends Component114 {
 };
 __publicField(SetActiveOnMobileComponent, "TypeName", "set-active-on-mobile");
 __publicField(SetActiveOnMobileComponent, "Properties", {
-  _myActiveOnMobile: Property51.bool(false)
+  _myActiveOnMobile: Property50.bool(false)
 });
 
 // src/playground/components/set_active_on_tracked_hands_component.ts
-import { Component as Component115, property as property36 } from "@wonderlandengine/api";
-var SetActiveOnMobileComponent2 = class extends Component115 {
+import { Component as Component116, property as property38 } from "@wonderlandengine/api";
+var SetActiveOnMobileComponent2 = class extends Component116 {
   _myActiveOnTrackedHands;
   update(dt) {
     if (Globals.getLeftHandPose(this.engine).getInputSourceType() != null && Globals.getRightHandPose(this.engine).getInputSourceType() != null) {
@@ -59429,12 +59518,12 @@ var SetActiveOnMobileComponent2 = class extends Component115 {
 };
 __publicField(SetActiveOnMobileComponent2, "TypeName", "set-active-on-tracked-hands");
 __decorateClass([
-  property36.bool(false)
+  property38.bool(false)
 ], SetActiveOnMobileComponent2.prototype, "_myActiveOnTrackedHands", 2);
 
 // src/playground/components/teleport_on_tracked_hands_component.ts
-import { Component as Component116, property as property37 } from "@wonderlandengine/api";
-var TeleportOnTrackedHandsComponent = class extends Component116 {
+import { Component as Component117, property as property39 } from "@wonderlandengine/api";
+var TeleportOnTrackedHandsComponent = class extends Component117 {
   _myTeleportTargetObject;
   _myUsingTrackedHands = false;
   _myDelayFrameCountdown = 3;
@@ -59468,12 +59557,12 @@ var TeleportOnTrackedHandsComponent = class extends Component116 {
 };
 __publicField(TeleportOnTrackedHandsComponent, "TypeName", "teleport-on-tracked-hands");
 __decorateClass([
-  property37.object()
+  property39.object()
 ], TeleportOnTrackedHandsComponent.prototype, "_myTeleportTargetObject", 2);
 
 // src/playground/components/toggle_how_to_text_component.ts
-import { Component as Component117, PhysXComponent as PhysXComponent15, property as property38, TextComponent as TextComponent19 } from "@wonderlandengine/api";
-var ToggleHowToTextComponent = class extends Component117 {
+import { Component as Component118, PhysXComponent as PhysXComponent15, property as property40, TextComponent as TextComponent19 } from "@wonderlandengine/api";
+var ToggleHowToTextComponent = class extends Component118 {
   _myTextObject;
   _myAnimatedScale;
   _myTextObjectInitialPositionLocal;
@@ -59537,7 +59626,7 @@ var ToggleHowToTextComponent = class extends Component117 {
 };
 __publicField(ToggleHowToTextComponent, "TypeName", "toggle-how-to-text");
 __decorateClass([
-  property38.object()
+  property40.object()
 ], ToggleHowToTextComponent.prototype, "_myTextObject", 2);
 
 // src/index.ts
@@ -59566,6 +59655,7 @@ function src_default(engine) {
   engine.registerComponent(ToolCursorComponent);
   engine.registerComponent(TrackedHandDrawAllJointsComponent);
   engine.registerComponent(VirtualGamepadComponent);
+  engine.registerComponent(WLCursorTargetWrapperComponent);
   engine.registerComponent(FadeViewComponent);
   engine.registerComponent(FunComponent);
   engine.registerComponent(GrabbableSpawnerComponent);
