@@ -33,8 +33,8 @@ let _myResourceURLsToPrecache = [
     "icon168.png",
     "icon192.png",
     "icon512.png",
-    "pwa/screenshots/pp/desktop_screenshot.png",
-    "pwa/screenshots/pp/mobile_screenshot.png"
+    "pwa/screenshots/desktop_screenshot.png",
+    "pwa/screenshots/mobile_screenshot.png"
 ];
 
 
